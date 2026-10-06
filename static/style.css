@@ -26,6 +26,16 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   clip-path: polygon(0 0,96% 0,100% 50%,96% 100%,0 100%,2% 50%);
   box-shadow: inset 0 0 0 2px rgba(230,207,148,.22), 0 4px 15px #0008;
 }
+.primary > .crest:first-child { display: none; }
+.sigil-definitions { position: absolute; width: 0; height: 0; overflow: hidden; }
+.world-icon { display: inline-flex; flex: 0 0 auto; color: #e6c879; filter: drop-shadow(0 1px 2px #0009); }
+.world-icon svg { width: 34px; height: 34px; overflow: visible; }
+.world-icon use { stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: rgba(219,183,99,.08); }
+.primary-world-icon { align-self: center; }
+.legacy-location { display: none; }
+.primary-location { display: flex; flex-direction: column; gap: 2px; }
+.world-name { color: #e6cd91; font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+.zone-name { color: #f1e3bf; font-size: 17px; }
 .primary::before { content: ""; position: absolute; inset: 4px 8px; border: 1px solid rgba(223,190,117,.36); pointer-events: none; }
 .crest { color: #efd28c; font-size: 29px; text-shadow: 0 0 9px #e8bc67; }
 .primary-copy { min-width: 0; }
@@ -53,7 +63,9 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .party-name { margin-top: 3px; color: #eee2c7; font-size: 13px; font-weight: 600; }
 .party-name.balance, .party-school { color: #d7bd83; }
 .party-school { margin-top: 1px; font-size: 10px; }
-.party-location { margin-top: 3px; color: #c7baa1; font-size: 10px; }
+.party-location { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: #c7baa1; font-size: 11px; line-height: 1.2; }
+.party-world-icon { color: #cdb06b; }
+.party-world-icon svg { width: 20px; height: 20px; }
 .arrival {
   position: fixed;
   left: 50vw;

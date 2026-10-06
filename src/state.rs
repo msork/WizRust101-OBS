@@ -11,6 +11,7 @@ use tokio::sync::broadcast;
 pub struct OverlayState {
     pub active: bool,
     pub world: Option<String>,
+    pub world_icon: String,
     pub zone: Option<String>,
     pub raw_zone: Option<String>,
     pub session_seconds: u64,
@@ -28,6 +29,8 @@ pub struct WizardPresence {
     pub school: String,
     pub active: bool,
     pub world: Option<String>,
+    #[serde(default)]
+    pub world_icon: String,
     pub zone: Option<String>,
     pub session_seconds: u64,
 }
@@ -54,6 +57,7 @@ impl SharedState {
         self.enrich(self.state.lock().unwrap().clone())
     }
     fn enrich(&self, mut snapshot: OverlayState) -> OverlayState {
+        snapshot.world_icon = crate::presentation::world_icon(snapshot.world.as_deref()).into();
         snapshot.session_seconds = self
             .session_started
             .lock()
@@ -71,10 +75,21 @@ impl SharedState {
                 school: p.school.clone(),
                 active: snapshot.active,
                 world: snapshot.world.clone(),
+                world_icon: snapshot.world_icon.clone(),
                 zone: snapshot.zone.clone(),
                 session_seconds: snapshot.session_seconds,
             });
-        snapshot.party = self.party.lock().unwrap().values().cloned().collect();
+        snapshot.party = self
+            .party
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .map(|mut member| {
+                member.world_icon = crate::presentation::world_icon(member.world.as_deref()).into();
+                member
+            })
+            .collect();
         snapshot
     }
     pub fn subscribe(&self) -> broadcast::Receiver<OverlayState> {
@@ -290,6 +305,7 @@ mod tests {
             school: "Storm".into(),
             active: true,
             world: Some("Wizard City".into()),
+            world_icon: String::new(),
             zone: Some("The Commons".into()),
             session_seconds: 22,
         };
@@ -319,6 +335,35 @@ mod tests {
         };
         assert!(!state.replace_party(vec![guest.clone(), guest], "local"));
         assert!(state.snapshot().party.is_empty());
+    }
+
+    #[test]
+    fn party_location_and_world_icon_updates_publish_without_reconnecting() {
+        let state = SharedState::new(AppConfig::default());
+        let mut updates = state.subscribe();
+        let member = WizardPresence {
+            peer_id: "guest".into(),
+            name: "Guest".into(),
+            school: "Storm".into(),
+            active: true,
+            world: Some("Wizard City".into()),
+            zone: Some("The Commons".into()),
+            ..Default::default()
+        };
+        assert!(state.replace_party(vec![member.clone()], "self"));
+        let first = updates.try_recv().unwrap();
+        assert_eq!(first.party[0].world_icon, "spiral");
+        assert_eq!(first.party[0].zone.as_deref(), Some("The Commons"));
+
+        let changed = WizardPresence {
+            world: Some("Celestia".into()),
+            zone: Some("Survey Camp".into()),
+            ..member
+        };
+        assert!(state.replace_party(vec![changed], "self"));
+        let second = updates.try_recv().unwrap();
+        assert_eq!(second.party[0].world_icon, "star");
+        assert_eq!(second.party[0].zone.as_deref(), Some("Survey Camp"));
     }
 
     #[test]

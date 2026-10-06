@@ -30,6 +30,8 @@ The first host-authoritative v1 topology supports one host and up to eight guest
 
 Each overlay derives its primary wizard from that app's own active profile and game state. The host has no special presentation role on guests' OBS views: every connected wizard appears only as a smaller party card in other participants' views. The host's own overlay keeps the host as primary.
 
+The primary card presents DB-resolved world name and zone beside an original inline vector sigil selected from the resolved world label. Party cards omit world-name text and show only that sigil plus the zone under name/school identity. Unknown and unmapped labels select a built-in fallback. Icon selection is recomputed during every local SSE enrichment and party snapshot update, so location and icon changes appear without reconnecting. Party change notices refer to the remote wizard's zone only.
+
 The app uses event-driven full roster snapshots rather than per-member UI commands. This follows the Pokélink web-source pattern of an initial party roster plus party update events, with a simpler local protocol and state model.
 
 ## Invite, authentication, and network exposure

@@ -5,6 +5,7 @@ pub mod log_tailer;
 pub mod mapping;
 pub mod parser;
 pub mod peer;
+pub mod presentation;
 pub mod replay;
 pub mod server;
 pub mod state;

@@ -793,6 +793,7 @@ mod tests {
                 school: school.into(),
                 active: true,
                 world: Some("Krokotopia".into()),
+                world_icon: String::new(),
                 zone: Some("The Oasis".into()),
                 session_seconds: 19,
             });
@@ -1081,6 +1082,7 @@ mod tests {
             school: school.into(),
             active: true,
             world: Some("Krokotopia".into()),
+            world_icon: String::new(),
             zone: Some("The Oasis".into()),
             session_seconds: 5,
         }))
