@@ -8,6 +8,7 @@ pub mod parser;
 pub mod peer;
 pub mod presentation;
 pub mod replay;
+pub mod school_palette;
 pub mod server;
 pub mod state;
 pub mod ui;

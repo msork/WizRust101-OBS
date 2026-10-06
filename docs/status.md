@@ -14,4 +14,6 @@ Needs real two-or-more-instance LAN/internet testing, router/UPnP/CGNAT testing,
 
 Updated the native profile wording/actions, added persisted Light/Dark appearance, simplified tray labels, and made Quit shut down HTTP/SSE, log following, Party tasks, UPnP mapping, and tray resources. The plaque default moved above the HUD based on the supplied screenshot. Session duration is no longer displayed. Overlay icons now use the actual RPC catalog and world PNGs, with absent labels omitted. Check the RPC fallback appearance manually: there is no local `wizard101.png` in RPC, so its `wizard101` fallback key currently serves this project's bundled WizRust101 app icon.
 
+Tray event handling was revised so native callbacks enqueue Open/Quit and send only the thread-safe repaint wake signal. The eframe update loop owns viewport changes and Quit. Added a queued-action regression test with 500 Open actions before Quit. School colors now come from one shared JSON palette for native settings and the overlay; manual tray hide/show stress testing is still needed.
+
 The bundled DB JSON keeps its source revision/hash documented in `research.md`; package work should establish a pinned submodule or reproducible refresh process. macOS CrossOver and Linux Flatpak Steam paths remain unvalidated on this host.

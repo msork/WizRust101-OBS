@@ -59,10 +59,9 @@ enum Tab {
     Wizard,
     Party,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrayAction {
     Open,
-    #[cfg(target_os = "linux")]
     Quit,
 }
 
@@ -189,7 +188,7 @@ impl SettingsApp {
             .or_else(|| draft.profiles.first().map(|p| p.id.clone()))
             .unwrap_or_default();
         let quit = Arc::new(Mutex::new(false));
-        let (tray_rx, tray) = install_tray(ctx, quit.clone(), display_name.clone());
+        let (tray_rx, tray) = install_tray(display_name.clone(), ctx);
         Self {
             shared,
             config_path,
@@ -523,14 +522,22 @@ impl SettingsApp {
                 });
             ui.horizontal(|ui| {
                 ui.label("Chosen school");
-                let color = school_color(&profile.school);
+                let color = crate::school_palette::primary_color(&profile.school);
                 ui.painter().circle_filled(
                     ui.cursor().left_top() + egui::vec2(12.0, 12.0),
                     10.0,
                     color,
                 );
+                let secondary = crate::school_palette::colors(&profile.school)
+                    .map(|colors| parse_school_color(&colors.secondary))
+                    .unwrap_or(color);
+                ui.painter().circle_stroke(
+                    ui.cursor().left_top() + egui::vec2(12.0, 12.0),
+                    10.0,
+                    Stroke::new(2.0_f32, secondary),
+                );
                 ui.add_space(28.0);
-                ui.label(RichText::new(&profile.school).strong().color(color));
+                ui.label(RichText::new(&profile.school).strong());
             });
             save_profile = brass_button(ui, "Save Profile").clicked();
             remove_profile = ui.button("Remove Profile").clicked();
@@ -668,9 +675,17 @@ impl SettingsApp {
                         GOLD
                     }));
                     ui.label(
+                        RichText::new("●")
+                            .color(crate::school_palette::primary_color(&member.school)),
+                    );
+                    let secondary = crate::school_palette::colors(&member.school)
+                        .map(|colors| parse_school_color(&colors.secondary))
+                        .unwrap_or(Color32::GRAY);
+                    ui.label(RichText::new("●").color(secondary));
+                    ui.label(
                         RichText::new(&member.name)
                             .strong()
-                            .color(school_color(&member.school)),
+                            .color(palette(self.draft.ui_theme).ink),
                     );
                     ui.label(RichText::new(format!("- {}", member.school)).small());
                     let status = if member.active {
@@ -762,7 +777,6 @@ impl eframe::App for SettingsApp {
                     ctx.send_viewport_cmd(ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(ViewportCommand::Focus);
                 }
-                #[cfg(target_os = "linux")]
                 TrayAction::Quit => signal_quit(&self.quit, ctx),
             }
         }
@@ -904,16 +918,9 @@ fn sigil(ui: &mut egui::Ui) {
         Stroke::new(2.0_f32, Color32::from_rgb(237, 204, 127)),
     );
 }
-fn school_color(s: &str) -> Color32 {
-    match s {
-        "Fire" => Color32::from_rgb(159, 54, 47),
-        "Ice" => Color32::from_rgb(65, 119, 163),
-        "Storm" => Color32::from_rgb(54, 96, 171),
-        "Myth" => Color32::from_rgb(171, 97, 18),
-        "Life" => Color32::from_rgb(67, 126, 82),
-        "Death" => Color32::from_rgb(104, 68, 137),
-        _ => Color32::from_rgb(27, 126, 130),
-    }
+fn parse_school_color(value: &str) -> Color32 {
+    let rgb = u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0x4f4951);
+    Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
 fn decode_icon(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
@@ -931,6 +938,7 @@ fn decode_icon(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::
 #[cfg(target_os = "linux")]
 struct LinuxTray {
     tx: std::sync::mpsc::Sender<TrayAction>,
+    repaint: Context,
     display_name: String,
 }
 #[cfg(target_os = "linux")]
@@ -971,25 +979,27 @@ impl ksni::Tray for LinuxTray {
             .collect()
     }
     fn activate(&mut self, _x: i32, _y: i32) {
-        let _ = self.tx.send(TrayAction::Open);
+        dispatch_tray_action(&self.tx, &self.repaint, TrayAction::Open);
     }
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::StandardItem;
         let tx = self.tx.clone();
+        let repaint = self.repaint.clone();
         let open = StandardItem {
             label: TRAY_OPEN_LABEL.into(),
             icon_name: "preferences-system".into(),
             activate: Box::new(move |_| {
-                let _ = tx.send(TrayAction::Open);
+                dispatch_tray_action(&tx, &repaint, TrayAction::Open);
             }),
             ..Default::default()
         };
         let tx = self.tx.clone();
+        let repaint = self.repaint.clone();
         let quit = StandardItem {
             label: TRAY_QUIT_LABEL.into(),
             icon_name: "application-exit".into(),
             activate: Box::new(move |_| {
-                let _ = tx.send(TrayAction::Quit);
+                dispatch_tray_action(&tx, &repaint, TrayAction::Quit);
             }),
             ..Default::default()
         };
@@ -998,11 +1008,7 @@ impl ksni::Tray for LinuxTray {
 }
 
 #[cfg(target_os = "linux")]
-fn install_tray(
-    _ctx: Context,
-    _quit: Arc<Mutex<bool>>,
-    display_name: String,
-) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(display_name: String, repaint: Context) -> (Receiver<TrayAction>, TrayLifetime) {
     use ksni::blocking::TrayMethods;
     let (tx, rx) = mpsc::channel();
     let (stop_tx, stop_rx) = mpsc::channel();
@@ -1010,6 +1016,7 @@ fn install_tray(
     let tray_thread = std::thread::spawn(move || {
         let service = LinuxTray {
             tx: thread_tx,
+            repaint,
             display_name,
         };
         if let Ok(handle) = service.assume_sni_available(true).spawn() {
@@ -1026,12 +1033,13 @@ fn install_tray(
     )
 }
 
+fn dispatch_tray_action(tx: &mpsc::Sender<TrayAction>, repaint: &Context, action: TrayAction) {
+    let _ = tx.send(action);
+    repaint.request_repaint();
+}
+
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn install_tray(
-    ctx: Context,
-    quit: Arc<Mutex<bool>>,
-    _display_name: String,
-) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction>, TrayLifetime) {
     use tray_icon::{
         Icon, TrayIconBuilder,
         menu::{Menu, MenuEvent, MenuItem},
@@ -1051,21 +1059,15 @@ fn install_tray(
         .with_menu(Box::new(menu))
         .build()
         .ok();
-    let ctx_menu = ctx.clone();
-    let quit_menu = quit.clone();
     let tx_menu = tx.clone();
+    let repaint_menu = repaint.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| match event.id.0.as_str() {
-        "show-settings" => {
-            let _ = tx_menu.send(TrayAction::Open);
-            ctx_menu.send_viewport_cmd(ViewportCommand::Visible(true));
-            ctx_menu.request_repaint();
-        }
-        "quit-app" => {
-            signal_quit(&quit_menu, &ctx_menu);
-        }
+        "show-settings" => dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Open),
+        "quit-app" => dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Quit),
         _ => {}
     }));
-    let ctx_click = ctx.clone();
+    let tx_click = tx.clone();
+    let repaint_click = repaint;
     tray_icon::TrayIconEvent::set_event_handler(Some(move |event| {
         if let tray_icon::TrayIconEvent::Click {
             button: tray_icon::MouseButton::Left,
@@ -1073,9 +1075,7 @@ fn install_tray(
             ..
         } = event
         {
-            ctx_click.send_viewport_cmd(ViewportCommand::Visible(true));
-            ctx_click.send_viewport_cmd(ViewportCommand::Focus);
-            ctx_click.request_repaint();
+            dispatch_tray_action(&tx_click, &repaint_click, TrayAction::Open);
         }
     }));
     (
@@ -1119,5 +1119,19 @@ mod icon_tests {
     #[test]
     fn icon_decoder_rejects_malformed_png() {
         assert!(decode_icon(b"not a PNG").is_err());
+    }
+
+    #[test]
+    fn tray_queue_keeps_repeated_open_and_quit_actions_independent() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        for _ in 0..500 {
+            super::dispatch_tray_action(&tx, &Context::default(), super::TrayAction::Open);
+        }
+        super::dispatch_tray_action(&tx, &Context::default(), super::TrayAction::Quit);
+        for _ in 0..500 {
+            assert_eq!(rx.try_recv(), Ok(super::TrayAction::Open));
+        }
+        assert_eq!(rx.try_recv(), Ok(super::TrayAction::Quit));
+        assert!(rx.try_recv().is_err());
     }
 }

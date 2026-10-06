@@ -1,0 +1,9 @@
+{
+  "Fire": { "primary": "#C93424", "secondary": "#F28C28" },
+  "Ice": { "primary": "#4B9CD3", "secondary": "#DCECF4" },
+  "Storm": { "primary": "#6D3FC0", "secondary": "#B28BE8" },
+  "Myth": { "primary": "#D4A514", "secondary": "#315B9D" },
+  "Life": { "primary": "#4D8B3A", "secondary": "#8A9A3A" },
+  "Death": { "primary": "#29252E", "secondary": "#716578" },
+  "Balance": { "primary": "#A66A32", "secondary": "#D7B77A" }
+}

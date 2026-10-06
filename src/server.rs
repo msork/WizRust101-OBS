@@ -39,6 +39,7 @@ fn router_with_shutdown(
         .route("/", get(root))
         .route("/overlay", get(overlay))
         .route("/style.css", get(stylesheet))
+        .route("/school-palette.json", get(school_palette))
         .route("/state", get(current_state))
         .route("/events", get(events))
         .route("/worlds/{asset}", get(world_asset))
@@ -70,6 +71,15 @@ async fn stylesheet() -> impl IntoResponse {
     (
         [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
         include_str!("../static/style.css"),
+    )
+}
+async fn school_palette() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )],
+        include_str!("../static/school-palette.json"),
     )
 }
 async fn world_asset(Path(asset): Path<String>) -> Response {
@@ -245,6 +255,25 @@ mod tests {
         let b = r.into_body().collect().await.unwrap().to_bytes();
         let s: serde_json::Value = serde_json::from_slice(&b).unwrap();
         assert!(s.get("session_seconds").is_some());
+    }
+
+    #[tokio::test]
+    async fn school_palette_endpoint_serves_the_central_palette() {
+        let response = router(SharedState::new(AppConfig::default()))
+            .oneshot(
+                Request::builder()
+                    .uri("/school-palette.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let served: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../static/school-palette.json")).unwrap();
+        assert_eq!(served, source);
     }
 
     #[tokio::test]

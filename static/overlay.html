@@ -34,6 +34,7 @@
     </main>
     <script>
       const $ = (id) => document.getElementById(id);
+      let schoolPalette = {};
       let previousZone = null;
       let previousParty = null;
       let hideTimer;
@@ -42,6 +43,12 @@
       function schoolClass(school) {
         const value = String(school).toLowerCase();
         return ['fire', 'ice', 'storm', 'myth', 'life', 'death', 'balance'].includes(value) ? value : 'balance';
+      }
+
+      function applySchoolPalette(element, school) {
+        const colors = schoolPalette[school] || { primary: '#4F4951', secondary: '#8F8792' };
+        element.style.setProperty('--school-primary', colors.primary);
+        element.style.setProperty('--school-secondary', colors.secondary);
       }
 
       function visible(value) {
@@ -100,14 +107,17 @@
         for (const wizard of members) {
           const card = document.createElement('article');
           card.className = 'party-card';
+          applySchoolPalette(card, wizard.school);
           const marker = document.createElement('div');
           marker.className = 'party-marker';
           marker.textContent = wizard.active ? 'ONLINE · IN THE SPIRAL' : 'ONLINE · BETWEEN WORLDS';
           const name = document.createElement('div');
           name.className = `party-name ${schoolClass(wizard.school)}`;
+          applySchoolPalette(name, wizard.school);
           name.textContent = wizard.name;
           const school = document.createElement('div');
           school.className = `party-school ${schoolClass(wizard.school)}`;
+          applySchoolPalette(school, wizard.school);
           school.textContent = wizard.school;
           const location = document.createElement('div');
           location.className = 'party-location';
@@ -139,6 +149,7 @@
         if (state.wizard) {
           $('identity').textContent = `${state.wizard.name} · ${state.wizard.school}`;
           $('identity').className = `identity ${schoolClass(state.wizard.school)}`;
+          applySchoolPalette($('identity'), state.wizard.school);
         } else {
           $('identity').textContent = 'Choose a character in Settings';
           $('identity').className = 'identity';
@@ -173,9 +184,15 @@
         previousZone = state.raw_zone;
       }
 
-      fetch('/state').then((response) => response.json()).then(render).catch(() => {});
+      Promise.all([fetch('/school-palette.json').then((response) => response.json()), fetch('/state').then((response) => response.json())])
+        .then(([palette, state]) => { schoolPalette = palette; render(state); })
+        .catch(() => {});
       const events = new EventSource('/events');
-      events.addEventListener('state', (event) => render(JSON.parse(event.data)));
+      events.addEventListener('state', (event) => {
+        const state = JSON.parse(event.data);
+        if (Object.keys(schoolPalette).length) render(state);
+        else fetch('/school-palette.json').then((response) => response.json()).then((palette) => { schoolPalette = palette; render(state); }).catch(() => render(state));
+      });
     </script>
   </body>
 </html>
