@@ -457,12 +457,12 @@ mod tests {
         assert!(html.contains("id=\"primary-school\""));
         assert!(!html.contains("party-notice"));
         assert!(html.contains("options.x_percent ?? 0.6"));
-        assert!(html.contains("options.y_percent ?? 25"));
+        assert!(html.contains("options.y_percent ?? 27"));
         let css = include_str!("../static/style.css");
         assert!(css.contains("flex-direction: column;"));
         assert!(css.contains(".party { display: flex; flex: 0 0 auto; flex-direction: column;"));
         assert!(css.contains("left: var(--x, .6%);"));
-        assert!(css.contains("top: var(--y, 25%);"));
+        assert!(css.contains("top: var(--y, 27%);"));
         assert!(css.contains("transform-origin: 0 0;"));
         assert!(css.contains("margin: 0; padding: 0; border: 0;"));
         assert!(!css.contains("#overlay { left: 2%;"));

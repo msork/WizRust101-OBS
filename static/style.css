@@ -4,7 +4,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 #overlay {
   position: absolute;
   left: var(--x, .6%);
-  top: var(--y, 25%);
+  top: var(--y, 27%);
   right: auto;
   bottom: auto;
   margin: 0;

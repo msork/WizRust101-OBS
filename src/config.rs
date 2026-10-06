@@ -106,7 +106,7 @@ impl Default for OverlayConfig {
             character_location: true,
             zone_transition: true,
             x_percent: 0.6,
-            y_percent: 25.0,
+            y_percent: 27.0,
             scale: 1.0,
             opacity: 1.0,
             transition_seconds: 4.0,
@@ -224,7 +224,14 @@ fn is_untouched_old_overlay_default(overlay: &OverlayConfig) -> bool {
     };
     // Both the original inset default and the previously shipped zero-origin
     // default are migrated. All other fields must still match untouched defaults.
-    overlay == &old_default(0.8, 1.0) || overlay == &old_default(0.0, 0.0)
+    let previous_release_default = OverlayConfig {
+        y_percent: 25.0,
+        opacity: 1.0,
+        ..OverlayConfig::default()
+    };
+    overlay == &old_default(0.8, 1.0)
+        || overlay == &old_default(0.0, 0.0)
+        || overlay == &previous_release_default
 }
 
 #[cfg(test)]
@@ -263,7 +270,7 @@ mod tests {
     fn default_overlay_stack_is_top_anchored_over_the_shop_area() {
         let overlay = OverlayConfig::default();
         assert_eq!(overlay.x_percent, 0.6);
-        assert_eq!(overlay.y_percent, 25.0);
+        assert_eq!(overlay.y_percent, 27.0);
         assert_eq!(overlay.scale, 1.0);
         assert_eq!(overlay.opacity, 1.0);
         assert_eq!(overlay.transition_seconds, 4.0);
@@ -285,7 +292,7 @@ mod tests {
         assert_eq!(loaded.overlay, OverlayConfig::default());
         let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["overlay"]["x_percent"], 0.6);
-        assert_eq!(saved["overlay"]["y_percent"], 25.0);
+        assert_eq!(saved["overlay"]["y_percent"], 27.0);
     }
 
     #[test]
@@ -300,6 +307,19 @@ mod tests {
 
         let loaded = AppConfig::load_from_path(&path).unwrap();
         assert_eq!(loaded.overlay, OverlayConfig::default());
+    }
+
+    #[test]
+    fn previous_release_default_y_position_migrates_to_27_percent() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut previous = AppConfig::default();
+        previous.overlay.y_percent = 25.0;
+        fs::write(&path, serde_json::to_vec_pretty(&previous).unwrap()).unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.overlay.y_percent, 27.0);
+        assert_eq!(loaded.overlay.x_percent, 0.6);
     }
 
     #[test]
