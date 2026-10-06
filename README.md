@@ -65,7 +65,7 @@ In **Overlay** settings, click **Copy overlay URL**. In OBS:
 4. Set width to `1920` and height to `1080` (or your 16:9 canvas size).
 5. Keep WizRust101-OBS running while the source is in use.
 
-The transparent page displays the manually selected wizard and automatically observed location. It uses the world PNGs and mapping from WizRust101-RPC. The default plaque sits at the upper left below Wizard101's corner controls, away from the health and mana HUD visible in the supplied gameplay screenshot. World/location labels are omitted when unresolved, and no session timer is shown. Zone arrivals and party events use short restrained notices. Placement, scale, opacity, transition duration, and both overlay elements can be changed in settings.
+The transparent page displays the manually selected wizard and automatically observed location. It uses the world PNGs and mapping from WizRust101-RPC, stored in `assets/worlds`, and the school icons in `assets/schools`. The local wizard remains the detailed, prominent card with school name; party cards show a school icon beside each name with no school-name text. Up to three smaller party cards stack directly below the local card. Party cards update in place, so unchanged world icons stay loaded and static during roster/SSE updates. Join and leave are silent on the overlay. Only local zone changes use the temporary location reveal. The default plaque sits at the upper left below Wizard101's corner controls, away from the health and mana HUD visible in the supplied gameplay screenshot. World/location labels are omitted when unresolved, and no session timer is shown. Placement, scale, opacity, transition duration, and both overlay elements can be changed in settings.
 
 ## Host or join a Party
 

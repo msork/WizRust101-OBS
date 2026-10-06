@@ -43,6 +43,7 @@ fn router_with_shutdown(
         .route("/state", get(current_state))
         .route("/events", get(events))
         .route("/worlds/{asset}", get(world_asset))
+        .route("/schools/{asset}", get(school_asset))
         .with_state(state)
 }
 pub async fn serve(
@@ -84,29 +85,44 @@ async fn school_palette() -> impl IntoResponse {
 }
 async fn world_asset(Path(asset): Path<String>) -> Response {
     let Some(bytes) = (match asset.as_str() {
-        "arcanum" => Some(&include_bytes!("../static/worlds/arcanum.png")[..]),
-        "aquila" => Some(&include_bytes!("../static/worlds/aquila.png")[..]),
-        "avalon" => Some(&include_bytes!("../static/worlds/avalon.png")[..]),
-        "azteca" => Some(&include_bytes!("../static/worlds/azteca.png")[..]),
-        "celestia" => Some(&include_bytes!("../static/worlds/celestia.png")[..]),
-        "darkmoor" => Some(&include_bytes!("../static/worlds/darkmoor.png")[..]),
-        "dragonspyre" => Some(&include_bytes!("../static/worlds/dragonspyre.png")[..]),
-        "empyrea" => Some(&include_bytes!("../static/worlds/empyrea.png")[..]),
-        "grizzleheim" => Some(&include_bytes!("../static/worlds/grizzleheim.png")[..]),
-        "karamelle" => Some(&include_bytes!("../static/worlds/karamelle.png")[..]),
-        "khrysalis" => Some(&include_bytes!("../static/worlds/khrysalis.png")[..]),
-        "krokotopia" => Some(&include_bytes!("../static/worlds/krokotopia.png")[..]),
-        "lumeria" => Some(&include_bytes!("../static/worlds/lumeria.png")[..]),
-        "marleybone" => Some(&include_bytes!("../static/worlds/marleybone.png")[..]),
-        "mirage" => Some(&include_bytes!("../static/worlds/mirage.png")[..]),
-        "mooshu" => Some(&include_bytes!("../static/worlds/mooshu.png")[..]),
-        "novus" => Some(&include_bytes!("../static/worlds/novus.png")[..]),
-        "polaris" => Some(&include_bytes!("../static/worlds/polaris.png")[..]),
-        "wallaru" => Some(&include_bytes!("../static/worlds/wallaru.png")[..]),
-        "wizardcity" => Some(&include_bytes!("../static/worlds/wizardcity.png")[..]),
+        "arcanum" => Some(&include_bytes!("../assets/worlds/arcanum.png")[..]),
+        "aquila" => Some(&include_bytes!("../assets/worlds/aquila.png")[..]),
+        "avalon" => Some(&include_bytes!("../assets/worlds/avalon.png")[..]),
+        "azteca" => Some(&include_bytes!("../assets/worlds/azteca.png")[..]),
+        "celestia" => Some(&include_bytes!("../assets/worlds/celestia.png")[..]),
+        "darkmoor" => Some(&include_bytes!("../assets/worlds/darkmoor.png")[..]),
+        "dragonspyre" => Some(&include_bytes!("../assets/worlds/dragonspyre.png")[..]),
+        "empyrea" => Some(&include_bytes!("../assets/worlds/empyrea.png")[..]),
+        "grizzleheim" => Some(&include_bytes!("../assets/worlds/grizzleheim.png")[..]),
+        "karamelle" => Some(&include_bytes!("../assets/worlds/karamelle.png")[..]),
+        "khrysalis" => Some(&include_bytes!("../assets/worlds/khrysalis.png")[..]),
+        "krokotopia" => Some(&include_bytes!("../assets/worlds/krokotopia.png")[..]),
+        "lumeria" => Some(&include_bytes!("../assets/worlds/lumeria.png")[..]),
+        "marleybone" => Some(&include_bytes!("../assets/worlds/marleybone.png")[..]),
+        "mirage" => Some(&include_bytes!("../assets/worlds/mirage.png")[..]),
+        "mooshu" => Some(&include_bytes!("../assets/worlds/mooshu.png")[..]),
+        "novus" => Some(&include_bytes!("../assets/worlds/novus.png")[..]),
+        "polaris" => Some(&include_bytes!("../assets/worlds/polaris.png")[..]),
+        "wallaru" => Some(&include_bytes!("../assets/worlds/wallaru.png")[..]),
+        "wizardcity" => Some(&include_bytes!("../assets/worlds/wizardcity.png")[..]),
         "wizard101" => Some(&include_bytes!("../assets/icons/sizes/128.png")[..]),
-        "wysteria" => Some(&include_bytes!("../static/worlds/wysteria.png")[..]),
-        "zafaria" => Some(&include_bytes!("../static/worlds/zafaria.png")[..]),
+        "wysteria" => Some(&include_bytes!("../assets/worlds/wysteria.png")[..]),
+        "zafaria" => Some(&include_bytes!("../assets/worlds/zafaria.png")[..]),
+        _ => None,
+    }) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    ([(axum::http::header::CONTENT_TYPE, "image/png")], bytes).into_response()
+}
+async fn school_asset(Path(asset): Path<String>) -> Response {
+    let Some(bytes) = (match asset.as_str() {
+        "balance" => Some(&include_bytes!("../assets/schools/balance.png")[..]),
+        "death" => Some(&include_bytes!("../assets/schools/death.png")[..]),
+        "fire" => Some(&include_bytes!("../assets/schools/fire.png")[..]),
+        "ice" => Some(&include_bytes!("../assets/schools/ice.png")[..]),
+        "life" => Some(&include_bytes!("../assets/schools/life.png")[..]),
+        "myth" => Some(&include_bytes!("../assets/schools/myth.png")[..]),
+        "storm" => Some(&include_bytes!("../assets/schools/storm.png")[..]),
         _ => None,
     }) else {
         return axum::http::StatusCode::NOT_FOUND.into_response();
@@ -324,6 +340,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn serves_all_school_icons_from_the_assets_directory() {
+        let app = router(SharedState::new(AppConfig::default()));
+        for school in ["balance", "death", "fire", "ice", "life", "myth", "storm"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/schools/{school}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], "image/png");
+            assert!(
+                !response
+                    .into_body()
+                    .collect()
+                    .await
+                    .unwrap()
+                    .to_bytes()
+                    .is_empty()
+            );
+        }
+        let missing = app
+            .oneshot(
+                Request::builder()
+                    .uri("/schools/unknown")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
     async fn events_stream_sends_initial_and_updated_state() {
         use crate::{mapping::ZoneCatalog, parser::GameEvent};
         let shared = SharedState::new(AppConfig::default());
@@ -393,5 +447,18 @@ mod tests {
         assert!(!html.contains("Unknown World"));
         assert!(!html.contains("Location unknown"));
         assert!(html.contains("/worlds/${safeKey}"));
+        assert!(html.contains("/schools/${schoolIconKey(school)}"));
+        assert!(html.contains("const partyCards = new Map()"));
+        assert!(html.contains("members.slice(0, 3)"));
+        assert!(!html.contains("party.replaceChildren()"));
+        assert!(!html.contains("joined your party"));
+        assert!(!html.contains("left your party"));
+        assert!(!html.contains("textContent = wizard.school"));
+        assert!(html.contains("id=\"primary-school\""));
+        assert!(!html.contains("party-notice"));
+        let css = include_str!("../static/style.css");
+        assert!(css.contains("flex-direction: column;"));
+        assert!(css.contains(".party { display: flex; flex-direction: column;"));
+        assert!(!css.contains(".party-notice"));
     }
 }
