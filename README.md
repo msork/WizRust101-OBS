@@ -1,3 +1,5 @@
+![WizRust101-OBS icon](assets/icons/sizes/128.png)
+
 # WizRust101-OBS
 
 A local Rust app that turns verified Wizard101 log observations into a quiet, transparent OBS Browser Source. It is independent of Twitch, YouTube, Kick, and streaming-platform accounts.
