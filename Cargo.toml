@@ -32,7 +32,8 @@ ksni = { version = "0.3.6", features = ["blocking"] }
 tray-icon = { version = "0.26.0", default-features = false, features = ["muda-common-controls-v6"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
+raw-window-handle = "0.6"
 
 [dev-dependencies]
 http-body-util = "0.1"

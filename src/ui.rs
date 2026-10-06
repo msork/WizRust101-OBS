@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::{
     io::Cursor,
     path::PathBuf,
@@ -65,6 +67,191 @@ enum TrayAction {
     Quit,
 }
 
+#[derive(Clone, Default)]
+struct WindowControl {
+    tx: Option<mpsc::Sender<NativeWindowCommand>>,
+    #[cfg(target_os = "windows")]
+    hidden: Option<Arc<AtomicBool>>,
+    #[cfg(target_os = "windows")]
+    hwnd: Option<Arc<AtomicIsize>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeWindowCommand {
+    Hide,
+    Show,
+    Quit,
+    #[cfg(target_os = "windows")]
+    Stop,
+}
+
+#[cfg(target_os = "windows")]
+struct NativeWindowWorker {
+    stop: mpsc::Sender<NativeWindowCommand>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl WindowControl {
+    fn hide(&self, ctx: &Context) {
+        if let Some(tx) = &self.tx {
+            #[cfg(target_os = "windows")]
+            debug_viewport_state("in-app hide requested", ctx, self.native_hidden());
+            let _ = tx.send(NativeWindowCommand::Hide);
+            return;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+    }
+
+    /// Returns true when a Windows native controller handled the show request.
+    fn show(&self, ctx: &Context) -> bool {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(NativeWindowCommand::Show);
+            ctx.request_repaint();
+            return true;
+        }
+        restore_settings_viewport(ctx);
+        false
+    }
+
+    #[cfg(target_os = "windows")]
+    fn native_hidden(&self) -> Option<bool> {
+        self.hidden
+            .as_ref()
+            .map(|hidden| hidden.load(Ordering::SeqCst))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_native_handle(&self, hwnd: Option<isize>) {
+        if let (Some(hwnd), Some(target)) = (hwnd, &self.hwnd) {
+            target.store(hwnd, Ordering::SeqCst);
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn native_hidden(&self) -> Option<bool> {
+        None
+    }
+
+    fn quit(&self) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(NativeWindowCommand::Quit);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn start_native_window_worker(
+    hwnd: Option<isize>,
+    repaint: Context,
+    quit: Arc<Mutex<bool>>,
+) -> (WindowControl, NativeWindowWorker) {
+    let (tx, rx) = mpsc::channel();
+    let handle = Arc::new(AtomicIsize::new(hwnd.unwrap_or_default()));
+    let hidden = Arc::new(AtomicBool::new(false));
+    let worker_handle = handle.clone();
+    let worker_hidden = hidden.clone();
+    let thread = std::thread::spawn(move || {
+        while let Ok(command) = rx.recv() {
+            if command == NativeWindowCommand::Stop {
+                break;
+            }
+            if command == NativeWindowCommand::Quit {
+                *quit.lock().unwrap() = true;
+            }
+            let hwnd = worker_handle.load(Ordering::SeqCst);
+            if hwnd == 0 {
+                debug_window_trace(&format!("{command:?} ignored: native HWND unavailable"));
+                repaint.request_repaint();
+                continue;
+            }
+            native_window_command(hwnd, command, &worker_hidden);
+            if command != NativeWindowCommand::Hide {
+                repaint.request_repaint();
+                debug_window_trace("native show completed; egui repaint requested");
+            }
+        }
+    });
+    (
+        WindowControl {
+            tx: Some(tx.clone()),
+            hidden: Some(hidden),
+            hwnd: Some(handle),
+        },
+        NativeWindowWorker {
+            stop: tx,
+            thread: Some(thread),
+        },
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn native_window_command(hwnd: isize, command: NativeWindowCommand, hidden: &AtomicBool) {
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            BringWindowToTop, GetForegroundWindow, IsIconic, IsWindowVisible, SW_HIDE, SW_RESTORE,
+            SetForegroundWindow, ShowWindow,
+        },
+    };
+
+    let hwnd = hwnd as HWND;
+    debug_window_trace(&format!(
+        "native {command:?} before: visible={}, minimized={}, foreground={}",
+        unsafe { IsWindowVisible(hwnd) != 0 },
+        unsafe { IsIconic(hwnd) != 0 },
+        unsafe { GetForegroundWindow() == hwnd },
+    ));
+    match command {
+        NativeWindowCommand::Hide => {
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            hidden.store(true, Ordering::SeqCst);
+        }
+        NativeWindowCommand::Show | NativeWindowCommand::Quit => {
+            unsafe { ShowWindow(hwnd, SW_RESTORE) };
+            unsafe {
+                BringWindowToTop(hwnd);
+                SetForegroundWindow(hwnd);
+            }
+            hidden.store(false, Ordering::SeqCst);
+        }
+        NativeWindowCommand::Stop => {}
+    }
+    debug_window_trace(&format!(
+        "native {command:?} after: visible={}, minimized={}, foreground={}, hidden_flag={}",
+        unsafe { IsWindowVisible(hwnd) != 0 },
+        unsafe { IsIconic(hwnd) != 0 },
+        unsafe { GetForegroundWindow() == hwnd },
+        hidden.load(Ordering::SeqCst),
+    ));
+}
+
+#[cfg(target_os = "windows")]
+fn debug_window_trace(message: &str) {
+    #[cfg(debug_assertions)]
+    eprintln!("[settings-window] {message}");
+    #[cfg(not(debug_assertions))]
+    let _ = message;
+}
+
+#[cfg(target_os = "windows")]
+fn debug_viewport_state(label: &str, ctx: &Context, native_hidden: Option<bool>) {
+    #[cfg(debug_assertions)]
+    {
+        let (minimized, focused) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (viewport.minimized, viewport.focused)
+        });
+        eprintln!(
+            "[settings-window] {label}: eframe-visible=not-exposed, minimized={minimized:?}, focused={focused:?}, native-hidden={native_hidden:?}"
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = (label, ctx, native_hidden);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn debug_viewport_state(_label: &str, _ctx: &Context, _native_hidden: Option<bool>) {}
+
 pub fn run(
     shared: SharedState,
     config_path: PathBuf,
@@ -93,6 +280,7 @@ pub fn run(
         options,
         Box::new(move |cc| {
             install_theme(&cc.egui_ctx, shared.config.lock().unwrap().ui_theme);
+            let native_hwnd = native_window_handle(cc);
             Ok(Box::new(SettingsApp::new(
                 shared.clone(),
                 cc.egui_ctx.clone(),
@@ -100,10 +288,36 @@ pub fn run(
                 overlay_url.clone(),
                 display_name.clone(),
                 demo_mode,
+                native_hwnd,
             )))
         }),
     )?;
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn native_window_handle(cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = cc.window_handle().ok()?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn frame_native_handle(frame: &eframe::Frame) -> Option<isize> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let handle = frame.window_handle().ok()?;
+    match handle.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(handle.hwnd.get()),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn native_window_handle(_cc: &eframe::CreationContext<'_>) -> Option<isize> {
+    None
 }
 
 fn install_theme(ctx: &Context, theme: UiTheme) {
@@ -154,6 +368,9 @@ struct SettingsApp {
     selected_profile: String,
     quit: Arc<Mutex<bool>>,
     tray_rx: Receiver<TrayAction>,
+    window_control: WindowControl,
+    startup_hide_pending: bool,
+    last_native_hidden: Option<bool>,
     focus_after_restore: bool,
     _tray: TrayLifetime,
 }
@@ -164,7 +381,11 @@ enum TrayLifetime {
         thread: Option<std::thread::JoinHandle<()>>,
     },
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    Native { _icon: tray_icon::TrayIcon },
+    Native {
+        _icon: tray_icon::TrayIcon,
+        #[cfg(target_os = "windows")]
+        worker: NativeWindowWorker,
+    },
 }
 #[cfg(target_os = "linux")]
 #[derive(Clone, Copy)]
@@ -180,6 +401,7 @@ impl SettingsApp {
         overlay_url: String,
         display_name: String,
         demo_mode: bool,
+        native_hwnd: Option<isize>,
     ) -> Self {
         let draft = shared.config.lock().unwrap().clone();
         let initial_state = shared.snapshot();
@@ -189,7 +411,8 @@ impl SettingsApp {
             .or_else(|| draft.profiles.first().map(|p| p.id.clone()))
             .unwrap_or_default();
         let quit = Arc::new(Mutex::new(false));
-        let (tray_rx, tray) = install_tray(display_name.clone(), ctx);
+        let (tray_rx, tray, window_control) =
+            install_tray(display_name.clone(), ctx, quit.clone(), native_hwnd);
         Self {
             shared,
             config_path,
@@ -206,6 +429,9 @@ impl SettingsApp {
             selected_profile,
             quit,
             tray_rx,
+            window_control,
+            startup_hide_pending: true,
+            last_native_hidden: None,
             focus_after_restore: false,
             _tray: tray,
         }
@@ -407,7 +633,7 @@ impl SettingsApp {
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Minimize to tray").clicked() {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Visible(false));
+                    self.window_control.hide(ui.ctx());
                 }
                 ui.selectable_value(&mut self.draft.ui_theme, UiTheme::Dark, "Dark");
                 ui.selectable_value(&mut self.draft.ui_theme, UiTheme::Light, "Light");
@@ -817,8 +1043,15 @@ impl SettingsApp {
 }
 
 impl eframe::App for SettingsApp {
-    fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        self.window_control
+            .set_native_handle(frame_native_handle(frame));
         install_theme(ctx, self.draft.ui_theme);
+        if self.startup_hide_pending {
+            self.startup_hide_pending = false;
+            self.window_control.hide(ctx);
+        }
         if self.focus_after_restore {
             // Focus has no effect on hidden or minimized native viewports.
             // This frame runs after the preceding restore commands were applied.
@@ -831,16 +1064,32 @@ impl eframe::App for SettingsApp {
         let close = ctx.input(|i| i.viewport().close_requested());
         if close && !*self.quit.lock().unwrap() {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+            self.window_control.hide(ctx);
+            debug_viewport_state(
+                "close-to-tray intercepted",
+                ctx,
+                self.window_control.native_hidden(),
+            );
         }
         while let Ok(action) = self.tray_rx.try_recv() {
             match action {
                 TrayAction::Open => {
-                    restore_settings_viewport(ctx);
-                    self.focus_after_restore = true;
-                    ctx.request_repaint();
+                    debug_viewport_state(
+                        "tray Open consumed by UI",
+                        ctx,
+                        self.window_control.native_hidden(),
+                    );
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        self.focus_after_restore = !self.window_control.show(ctx);
+                        ctx.request_repaint();
+                    }
                 }
-                TrayAction::Quit => signal_quit(&self.quit, ctx),
+                TrayAction::Quit => {
+                    #[cfg(target_os = "windows")]
+                    debug_window_trace("tray Quit consumed by UI");
+                    signal_quit(&self.quit, ctx);
+                }
             }
         }
         egui::TopBottomPanel::top("spellbook-top")
@@ -882,6 +1131,11 @@ impl eframe::App for SettingsApp {
                 });
             });
         ctx.request_repaint_after(Duration::from_millis(180));
+        let hidden = self.window_control.native_hidden();
+        if hidden != self.last_native_hidden {
+            debug_viewport_state("frame observed native visibility transition", ctx, hidden);
+            self.last_native_hidden = hidden;
+        }
         let saved = self.shared.config.lock().unwrap().clone();
         if self.draft != saved
             && self.draft.validate().is_ok()
@@ -906,6 +1160,15 @@ impl Drop for TrayLifetime {
             let _ = stop.send(LinuxCommand::Stop);
             if let Some(thread) = thread.take() {
                 let _ = thread.join();
+            }
+        }
+        #[cfg(target_os = "windows")]
+        match self {
+            TrayLifetime::Native { worker, .. } => {
+                let _ = worker.stop.send(NativeWindowCommand::Stop);
+                if let Some(thread) = worker.thread.take() {
+                    let _ = thread.join();
+                }
             }
         }
     }
@@ -1097,7 +1360,12 @@ impl ksni::Tray for LinuxTray {
 }
 
 #[cfg(target_os = "linux")]
-fn install_tray(display_name: String, repaint: Context) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(
+    display_name: String,
+    repaint: Context,
+    _quit: Arc<Mutex<bool>>,
+    _native_hwnd: Option<isize>,
+) -> (Receiver<TrayAction>, TrayLifetime, WindowControl) {
     use ksni::blocking::TrayMethods;
     let (tx, rx) = mpsc::channel();
     let (stop_tx, stop_rx) = mpsc::channel();
@@ -1119,6 +1387,7 @@ fn install_tray(display_name: String, repaint: Context) -> (Receiver<TrayAction>
             stop: stop_tx,
             thread: Some(tray_thread),
         },
+        WindowControl::default(),
     )
 }
 
@@ -1128,12 +1397,21 @@ fn dispatch_tray_action(tx: &mpsc::Sender<TrayAction>, repaint: &Context, action
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(
+    _display_name: String,
+    repaint: Context,
+    quit: Arc<Mutex<bool>>,
+    native_hwnd: Option<isize>,
+) -> (Receiver<TrayAction>, TrayLifetime, WindowControl) {
     use tray_icon::{
         Icon, TrayIconBuilder,
         menu::{Menu, MenuEvent, MenuItem},
     };
     let (tx, rx) = mpsc::channel();
+    #[cfg(target_os = "windows")]
+    let (window_control, worker) = start_native_window_worker(native_hwnd, repaint.clone(), quit);
+    #[cfg(target_os = "macos")]
+    let window_control = WindowControl::default();
     let menu = Menu::new();
     let show = MenuItem::with_id("show-settings", TRAY_OPEN_LABEL, true, None);
     let exit = MenuItem::with_id("quit-app", TRAY_QUIT_LABEL, true, None);
@@ -1150,13 +1428,21 @@ fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction
         .ok();
     let tx_menu = tx.clone();
     let repaint_menu = repaint.clone();
+    let menu_control = window_control.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| match event.id.0.as_str() {
-        "show-settings" => dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Open),
-        "quit-app" => dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Quit),
+        "show-settings" => {
+            menu_control.show(&repaint_menu);
+            dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Open);
+        }
+        "quit-app" => {
+            menu_control.quit();
+            dispatch_tray_action(&tx_menu, &repaint_menu, TrayAction::Quit);
+        }
         _ => {}
     }));
     let tx_click = tx.clone();
-    let repaint_click = repaint;
+    let repaint_click = repaint.clone();
+    let click_control = window_control.clone();
     tray_icon::TrayIconEvent::set_event_handler(Some(move |event| {
         if let tray_icon::TrayIconEvent::Click {
             button: tray_icon::MouseButton::Left,
@@ -1164,6 +1450,7 @@ fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction
             ..
         } = event
         {
+            let _ = click_control.show(&repaint_click);
             dispatch_tray_action(&tx_click, &repaint_click, TrayAction::Open);
         }
     }));
@@ -1171,7 +1458,10 @@ fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction
         rx,
         TrayLifetime::Native {
             _icon: tray.expect("Could not create the system tray icon"),
+            #[cfg(target_os = "windows")]
+            worker,
         },
+        window_control,
     )
 }
 
@@ -1266,6 +1556,34 @@ mod icon_tests {
             assert_eq!(rx.try_recv(), Ok(super::TrayAction::Open));
         }
         assert_eq!(rx.try_recv(), Ok(super::TrayAction::Quit));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn twenty_native_hide_open_cycles_leave_eframe_visible_and_quit_queued() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let control = super::WindowControl {
+            tx: Some(tx),
+            ..Default::default()
+        };
+        let ctx = Context::default();
+        for _ in 0..20 {
+            let hidden = ctx.run(RawInput::default(), |ctx| control.hide(ctx));
+            assert!(
+                hidden.viewport_output[&ViewportId::ROOT]
+                    .commands
+                    .is_empty()
+            );
+            assert_eq!(rx.try_recv(), Ok(super::NativeWindowCommand::Hide));
+
+            let shown = ctx.run(RawInput::default(), |ctx| {
+                assert!(control.show(ctx));
+            });
+            assert!(shown.viewport_output[&ViewportId::ROOT].commands.is_empty());
+            assert_eq!(rx.try_recv(), Ok(super::NativeWindowCommand::Show));
+        }
+        control.quit();
+        assert_eq!(rx.try_recv(), Ok(super::NativeWindowCommand::Quit));
         assert!(rx.try_recv().is_err());
     }
 

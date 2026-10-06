@@ -4058,6 +4058,7 @@ dependencies = [
  "ksni",
  "png 0.17.16",
  "rand 0.9.5",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "snow",
