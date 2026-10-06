@@ -154,6 +154,7 @@ struct SettingsApp {
     selected_profile: String,
     quit: Arc<Mutex<bool>>,
     tray_rx: Receiver<TrayAction>,
+    focus_after_restore: bool,
     _tray: TrayLifetime,
 }
 enum TrayLifetime {
@@ -205,11 +206,39 @@ impl SettingsApp {
             selected_profile,
             quit,
             tray_rx,
+            focus_after_restore: false,
             _tray: tray,
         }
     }
     fn save(&mut self) {
         self.persist(true);
+    }
+    fn save_profile_selection(&mut self) {
+        if self.draft.validate().is_ok() {
+            self.save();
+            return;
+        }
+
+        // An incomplete new profile must not block activation of another
+        // already-saved profile. Persist only the active ID in that case.
+        let mut current = self.shared.config.lock().unwrap();
+        if !current
+            .profiles
+            .iter()
+            .any(|profile| profile.id == self.selected_profile)
+        {
+            return;
+        }
+        let mut updated = current.clone();
+        updated.active_profile = Some(self.selected_profile.clone());
+        match updated.save_to_path(&self.config_path) {
+            Ok(()) => {
+                *current = updated;
+                drop(current);
+                self.shared.publish_current();
+            }
+            Err(error) => self.status = format!("Could not save settings: {error}"),
+        }
     }
     fn persist(&mut self, announce: bool) {
         let mut saved = self.shared.config.lock().unwrap();
@@ -490,6 +519,7 @@ impl SettingsApp {
             "YOUR CHARACTER",
             "Enter the character name exactly as it appears in Wizard101. This name and school are configured here, not detected from the game.",
         );
+        let previous_selection = self.selected_profile.clone();
         ui.horizontal(|ui| {
             ui.label("Saved profile");
             ComboBox::from_id_salt("profiles")
@@ -521,6 +551,11 @@ impl SettingsApp {
                 self.selected_profile = id;
             }
         });
+        if self.selected_profile != previous_selection
+            && activate_selected_profile(&mut self.draft, &self.selected_profile)
+        {
+            self.save_profile_selection();
+        }
         let mut save_profile = false;
         let mut remove_profile = false;
         if let Some(profile) = self.profile_mut() {
@@ -561,10 +596,6 @@ impl SettingsApp {
             });
             save_profile = brass_button(ui, "Save Profile").clicked();
             remove_profile = ui.button("Remove Profile").clicked();
-            if ui.button("Use as active character").clicked() {
-                self.draft.active_profile = Some(self.selected_profile.clone());
-                self.status = "Active character selected".into();
-            }
         } else {
             ui.add_space(16.0);
             ui.label("Add a character profile to set the name and school for your overlay.");
@@ -788,6 +819,12 @@ impl SettingsApp {
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         install_theme(ctx, self.draft.ui_theme);
+        if self.focus_after_restore {
+            // Focus has no effect on hidden or minimized native viewports.
+            // This frame runs after the preceding restore commands were applied.
+            focus_settings_viewport(ctx);
+            self.focus_after_restore = false;
+        }
         if *self.quit.lock().unwrap() {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
@@ -799,8 +836,9 @@ impl eframe::App for SettingsApp {
         while let Ok(action) = self.tray_rx.try_recv() {
             match action {
                 TrayAction::Open => {
-                    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(ViewportCommand::Focus);
+                    restore_settings_viewport(ctx);
+                    self.focus_after_restore = true;
+                    ctx.request_repaint();
                 }
                 TrayAction::Quit => signal_quit(&self.quit, ctx),
             }
@@ -877,6 +915,28 @@ fn signal_quit(quit: &Arc<Mutex<bool>>, ctx: &Context) {
     *quit.lock().unwrap() = true;
     ctx.send_viewport_cmd(ViewportCommand::Close);
     ctx.request_repaint();
+}
+
+fn restore_settings_viewport(ctx: &Context) {
+    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+}
+
+fn focus_settings_viewport(ctx: &Context) {
+    ctx.send_viewport_cmd(ViewportCommand::Focus);
+}
+
+fn activate_selected_profile(config: &mut AppConfig, profile_id: &str) -> bool {
+    if config
+        .profiles
+        .iter()
+        .any(|profile| profile.id == profile_id)
+    {
+        config.active_profile = Some(profile_id.to_owned());
+        true
+    } else {
+        false
+    }
 }
 
 fn section(ui: &mut egui::Ui, title: &str, subtitle: &str) {
@@ -1117,8 +1177,12 @@ fn install_tray(_display_name: String, repaint: Context) -> (Receiver<TrayAction
 
 #[cfg(test)]
 mod icon_tests {
-    use super::{decode_icon, signal_quit, window_title};
-    use eframe::egui::Context;
+    use super::{
+        activate_selected_profile, decode_icon, focus_settings_viewport, restore_settings_viewport,
+        signal_quit, window_title,
+    };
+    use crate::config::{AppConfig, CharacterProfile};
+    use eframe::egui::{Context, RawInput, ViewportCommand, ViewportId};
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -1134,6 +1198,47 @@ mod icon_tests {
         let quit = Arc::new(Mutex::new(false));
         signal_quit(&quit, &Context::default());
         assert!(*quit.lock().unwrap());
+    }
+
+    #[test]
+    fn restore_unminimizes_and_shows_before_focus_is_requested() {
+        let ctx = Context::default();
+        let restored = ctx.run(RawInput::default(), restore_settings_viewport);
+        let commands = &restored.viewport_output[&ViewportId::ROOT].commands;
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                ViewportCommand::Minimized(false),
+                ViewportCommand::Visible(true)
+            ]
+        ));
+
+        let focused = ctx.run(RawInput::default(), focus_settings_viewport);
+        let commands = &focused.viewport_output[&ViewportId::ROOT].commands;
+        assert!(matches!(commands.as_slice(), [ViewportCommand::Focus]));
+    }
+
+    #[test]
+    fn selecting_a_saved_profile_immediately_changes_active_profile() {
+        let config_profiles = ["first", "second"]
+            .into_iter()
+            .map(|id| CharacterProfile {
+                id: id.into(),
+                name: format!("Wizard {id}"),
+                school: "Life".into(),
+                ..Default::default()
+            })
+            .collect();
+        let mut config = AppConfig {
+            profiles: config_profiles,
+            active_profile: Some("first".into()),
+            ..Default::default()
+        };
+
+        assert!(activate_selected_profile(&mut config, "second"));
+        assert_eq!(config.active_profile.as_deref(), Some("second"));
+        assert!(!activate_selected_profile(&mut config, "missing"));
+        assert_eq!(config.active_profile.as_deref(), Some("second"));
     }
 
     #[test]

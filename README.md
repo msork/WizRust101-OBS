@@ -4,7 +4,7 @@ A local Rust application that turns verified Wizard101 log observations into a q
 
 ## Start and preview
 
-Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. The tray menu shows **Open Settings** and **Quit WizRust101-OBS**. Closing the settings window hides it; Quit closes the tray and all app services. Light/Dark appearance and valid setting edits are saved locally. Linux needs a desktop StatusNotifierItem/AppIndicator host.
+Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. **Open Settings** restores and focuses the existing settings window even after minimizing, hiding, or closing it to the tray. The tray menu shows **Open Settings** and **Quit WizRust101-OBS**. Closing the settings window hides it; Quit closes the tray and all app services. Selecting a saved profile makes it active immediately. Light/Dark appearance and valid setting edits are saved locally. Linux needs a desktop StatusNotifierItem/AppIndicator host.
 
 Run `cargo run -- --demo` to use controllable mock game state without launching Wizard101 or discovering game logs. The native Overlay tab lets you edit the mock world/zone and apply it or end the mock session. Choose a saved profile under **My Wizard**; profile identity stays configured independently of the mock location.
 

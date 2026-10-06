@@ -18,6 +18,10 @@ Ingestion boundaries follow WizRust101-RPC: Steam discovery, byte-offset increme
 
 Axum and Tokio serve the overlay at `127.0.0.1:17841`. Routes are `/overlay`, `/style.css`, `/school-palette.json`, `/state`, `/events`, and an allowlisted `/worlds/{asset}` handler. SSE suits OBS because the browser only consumes state and EventSource reconnects natively. The old `/settings` page and config endpoints are removed. Config never travels over HTTP. Application shutdown signals graceful HTTP closure, stops log following and peer tasks, removes an active UPnP mapping, then drops the tray.
 
+The native settings app has one eframe root viewport for its lifetime. Tray callbacks enqueue `Open`/`Quit` actions and request a repaint. `Open` sends `Minimized(false)` followed by `Visible(true)`; the next UI frame sends `Focus`. eframe 0.33.3 documents that `Focus` has no effect while a viewport is minimized or invisible, which explains why the former same-frame `Visible(true)` + `Focus` sequence could leave a minimized/hidden Windows window inert. Close-to-tray still cancels native close and hides the root viewport, so tray activation restores the same window rather than creating another one. Native Windows behavior still requires manual acceptance.
+
+The profile selector writes its selected ID to `active_profile` and persists the config immediately when the config is valid. `SharedState::publish_current` refreshes overlay SSE and host roster subscribers; peer clients read the new local identity on their next presence update.
+
 The transparent HTML/CSS/JS uses OBS Browser Source, so no native OBS plugin is needed. No remote images, fonts, scripts, account service, or streaming-platform API is used.
 
 ## Desktop settings

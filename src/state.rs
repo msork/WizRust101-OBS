@@ -368,6 +368,38 @@ mod tests {
     }
 
     #[test]
+    fn active_profile_change_immediately_updates_local_presence_and_overlay_state() {
+        let mut config = AppConfig::default();
+        config.profiles = [
+            crate::config::CharacterProfile {
+                id: "one".into(),
+                name: "Wizard One".into(),
+                school: "Fire".into(),
+                ..Default::default()
+            },
+            crate::config::CharacterProfile {
+                id: "two".into(),
+                name: "Wizard Two".into(),
+                school: "Myth".into(),
+                ..Default::default()
+            },
+        ]
+        .into();
+        config.active_profile = Some("one".into());
+        let state = SharedState::new(config);
+        state.set_demo_state("Wizard City", "The Commons", "mock/zone");
+        let mut updates = state.subscribe();
+        assert_eq!(state.local_presence().unwrap().name, "Wizard One");
+
+        state.config.lock().unwrap().active_profile = Some("two".into());
+        state.publish_current();
+        let changed = updates.try_recv().unwrap();
+        assert_eq!(changed.wizard.as_ref().unwrap().name, "Wizard Two");
+        assert_eq!(changed.wizard.unwrap().school, "Myth");
+        assert_eq!(state.local_presence().unwrap().name, "Wizard Two");
+    }
+
+    #[test]
     fn malformed_and_duplicate_party_roster_entries_are_rejected() {
         let state = SharedState::new(AppConfig::default());
         let guest = WizardPresence {
