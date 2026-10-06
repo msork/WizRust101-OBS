@@ -36,6 +36,8 @@ use crate::{
 
 pub const PEER_PORT: u16 = 17842;
 pub const HOST_MEMBER_ID: &str = "party-host";
+pub const MAX_PARTY_SIZE: usize = 4;
+pub const MAX_GUESTS: usize = MAX_PARTY_SIZE - 1;
 const INVITE_TTL_SECS: u64 = 24 * 60 * 60;
 const INVITE_PREFIX: &str = "WIZPARTY1.";
 const PROTOCOL: &str = "Noise_NNpsk0_25519_ChaChaPoly_BLAKE2s";
@@ -319,7 +321,7 @@ fn peer_router(shared: SharedState, shutdown: broadcast::Sender<()>) -> Router {
         .route("/peer", get(peer_upgrade))
         .with_state(Arc::new(PeerServerState {
             shared,
-            capacity: Arc::new(Semaphore::new(8)),
+            capacity: Arc::new(Semaphore::new(MAX_GUESTS)),
             shutdown,
             active_members: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         }))
@@ -356,17 +358,15 @@ async fn peer_upgrade(
     let Some((credential, secret)) = paired_credential(&server.shared, &query.peer_id) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let Ok(permit) = server.capacity.clone().try_acquire_owned() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    if !server
-        .active_members
-        .lock()
-        .unwrap()
-        .insert(credential.peer_id.clone())
-    {
+    let mut active_members = server.active_members.lock().unwrap();
+    if active_members.contains(&credential.peer_id) {
         return StatusCode::CONFLICT.into_response();
     }
+    let Ok(permit) = server.capacity.clone().try_acquire_owned() else {
+        return party_full_response();
+    };
+    active_members.insert(credential.peer_id.clone());
+    drop(active_members);
     let active_members = server.active_members.clone();
     let active_member = ActiveMember {
         id: credential.peer_id.clone(),
@@ -382,6 +382,15 @@ async fn peer_upgrade(
             let _active_id = active_member;
             serve_socket(socket, shared, id, secret, false, shutdown).await;
         })
+}
+
+fn party_full_response() -> Response {
+    (
+        StatusCode::CONFLICT,
+        [("x-wizrust-party-error", "full")],
+        "Party is full",
+    )
+        .into_response()
 }
 
 struct ActiveMember {
@@ -511,7 +520,7 @@ async fn serve_socket(
                     let mut plain=[0_u8;MAX_CIPHERTEXT];let Ok(n)=transport.read_message(&data,&mut plain) else{break};
                     if last.elapsed()<Duration::from_millis(500){continue;}last=Instant::now();
                     let Ok(PeerFrame::Join(mut presence))=serde_json::from_slice(&plain[..n]) else{break};
-                    presence.peer_id=peer_id.clone();if !valid_presence(&presence){break;}shared.set_peer_presence(presence);
+                    presence.peer_id=peer_id.clone();if !valid_presence(&presence) || !shared.set_peer_presence(presence){break;}
                 }
                 Some(Ok(Message::Ping(p)))=>if sink.send(Message::Pong(p)).await.is_err(){break},
                 Some(Ok(Message::Close(_)))|None|Some(Err(_))=>break,
@@ -543,7 +552,7 @@ fn party_members(shared: &SharedState) -> Option<Vec<WizardPresence>> {
     host.peer_id = HOST_MEMBER_ID.into();
     let mut members = vec![host];
     members.extend(shared.snapshot().party);
-    (members.len() <= 9).then_some(members)
+    (members.len() <= MAX_PARTY_SIZE).then_some(members)
 }
 
 async fn send_peer_frame(
@@ -635,31 +644,40 @@ async fn client_loop(shared: SharedState, credential: PeerCredential) {
         {
             return;
         }
-        if let Ok(request) = url.as_str().into_client_request()
-            && let Ok((mut socket, _)) = tokio_tungstenite::connect_async(request).await
-        {
-            let params: NoiseParams = PROTOCOL.parse().expect("fixed Noise suite");
-            if let Ok(mut handshake) = Builder::new(params)
-                .psk(0, &psk)
-                .and_then(|b| b.prologue(credential.peer_id.as_bytes()))
-                .and_then(|b| b.build_initiator())
+        if let Ok(request) = url.as_str().into_client_request() {
+            let connection = tokio_tungstenite::connect_async(request).await;
+            if let Err(error) = &connection
+                && is_party_full_error(error)
             {
-                let mut buf = [0_u8; MAX_CIPHERTEXT];
-                if let Ok(n) = handshake.write_message(&[], &mut buf)
-                    && socket
-                        .send(tokio_tungstenite::tungstenite::Message::Binary(
-                            buf[..n].to_vec().into(),
-                        ))
-                        .await
-                        .is_ok()
-                    && let Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(reply)))) =
-                        timeout(Duration::from_secs(8), socket.next()).await
+                shared.set_party_status(Some("Party is full".into()));
+            } else if connection.is_err() {
+                shared.set_party_status(None);
+            }
+            if let Ok((mut socket, _)) = connection {
+                shared.set_party_status(None);
+                let params: NoiseParams = PROTOCOL.parse().expect("fixed Noise suite");
+                if let Ok(mut handshake) = Builder::new(params)
+                    .psk(0, &psk)
+                    .and_then(|b| b.prologue(credential.peer_id.as_bytes()))
+                    .and_then(|b| b.build_initiator())
                 {
-                    let mut plain = [0_u8; MAX_CIPHERTEXT];
-                    if handshake.read_message(&reply, &mut plain).is_ok()
-                        && let Ok(mut transport) = handshake.into_transport_mode()
+                    let mut buf = [0_u8; MAX_CIPHERTEXT];
+                    if let Ok(n) = handshake.write_message(&[], &mut buf)
+                        && socket
+                            .send(tokio_tungstenite::tungstenite::Message::Binary(
+                                buf[..n].to_vec().into(),
+                            ))
+                            .await
+                            .is_ok()
+                        && let Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(reply)))) =
+                            timeout(Duration::from_secs(8), socket.next()).await
                     {
-                        client_session(&mut socket, &shared, &credential, &mut transport).await;
+                        let mut plain = [0_u8; MAX_CIPHERTEXT];
+                        if handshake.read_message(&reply, &mut plain).is_ok()
+                            && let Ok(mut transport) = handshake.into_transport_mode()
+                        {
+                            client_session(&mut socket, &shared, &credential, &mut transport).await;
+                        }
                     }
                 }
             }
@@ -667,6 +685,11 @@ async fn client_loop(shared: SharedState, credential: PeerCredential) {
         shared.clear_party();
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
+}
+
+fn is_party_full_error(error: &tokio_tungstenite::tungstenite::Error) -> bool {
+    matches!(error, tokio_tungstenite::tungstenite::Error::Http(response)
+        if response.headers().get("x-wizrust-party-error").is_some_and(|value| value == "full"))
 }
 
 async fn client_session(
@@ -1071,6 +1094,118 @@ mod tests {
         assert_eq!(after_leave.len(), 2);
 
         let _ = first.0.send(ClientMessage::Close(None)).await;
+        let _ = shutdown.send(());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn party_capacity_rejects_fifth_wizard_and_releases_slot_for_rejoin() {
+        use tokio_tungstenite::tungstenite::{Error as WsError, Message as ClientMessage};
+
+        let mut config = AppConfig::default();
+        config.profiles.push(CharacterProfile {
+            id: "host-profile".into(),
+            name: "Host Wizard".into(),
+            school: "Fire".into(),
+            ..Default::default()
+        });
+        config.active_profile = Some("host-profile".into());
+        let mut invite_keys = Vec::new();
+        for id in ["guest-a", "guest-b", "guest-c", "guest-d"] {
+            let (credential, key) = create_pairing(id.into()).unwrap();
+            config.peer_links.push(credential);
+            invite_keys.push(key);
+        }
+        let host = SharedState::new(config);
+        host.set_demo_state("Wizard City", "The Commons", "WC_Hub");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, _) = broadcast::channel(1);
+        let app = peer_router(host.clone(), shutdown.clone());
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let mut guests = Vec::new();
+        for (index, id) in ["guest-a", "guest-b", "guest-c"].into_iter().enumerate() {
+            let mut guest = connect_test_peer(address, id, invite_keys[index]).await;
+            assert!(matches!(
+                read_test_frame(&mut guest).await,
+                PeerFrame::Welcome { .. }
+            ));
+            assert!(matches!(
+                read_test_frame(&mut guest).await,
+                PeerFrame::PartySnapshot { .. }
+            ));
+            send_test_join(&mut guest, id, &format!("Wizard {id}"), "Life").await;
+            guests.push(guest);
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while host.snapshot().party.len() != index + 1 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(party_members(&host).unwrap().len(), MAX_PARTY_SIZE);
+
+        let fifth_url = format!("ws://{address}/peer?peer_id=guest-d");
+        let full_error = tokio_tungstenite::connect_async(fifth_url.clone())
+            .await
+            .unwrap_err();
+        let WsError::Http(response) = full_error else {
+            panic!("expected an HTTP Party capacity rejection");
+        };
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(is_party_full_error(&WsError::Http(response.clone())));
+        assert_eq!(
+            response.body().as_deref(),
+            Some(b"Party is full".as_slice())
+        );
+        assert_eq!(host.snapshot().party.len(), MAX_GUESTS);
+
+        let duplicate =
+            tokio_tungstenite::connect_async(format!("ws://{address}/peer?peer_id=guest-a"))
+                .await
+                .unwrap_err();
+        let WsError::Http(response) = duplicate else {
+            panic!("expected duplicate invite connection rejection");
+        };
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(!is_party_full_error(&WsError::Http(response)));
+        assert_eq!(host.snapshot().party.len(), MAX_GUESTS);
+
+        guests[0].0.send(ClientMessage::Close(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while host.snapshot().party.len() != MAX_GUESTS - 1 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let mut rejoined = connect_test_peer(address, "guest-a", invite_keys[0]).await;
+        assert!(matches!(
+            read_test_frame(&mut rejoined).await,
+            PeerFrame::Welcome { .. }
+        ));
+        let PeerFrame::PartySnapshot { members } = read_test_frame(&mut rejoined).await else {
+            panic!("expected rejoin roster snapshot");
+        };
+        assert_eq!(members.len(), MAX_PARTY_SIZE - 1);
+        send_test_join(&mut rejoined, "guest-a", "Wizard guest-a", "Life").await;
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while host.snapshot().party.len() != MAX_GUESTS {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let roster = host.snapshot().party;
+        assert_eq!(roster.len(), MAX_GUESTS);
+        assert_eq!(roster.iter().filter(|p| p.peer_id == "guest-a").count(), 1);
+        assert_eq!(party_members(&host).unwrap().len(), MAX_PARTY_SIZE);
+
         let _ = shutdown.send(());
         server.abort();
     }

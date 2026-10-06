@@ -251,7 +251,7 @@ impl SettingsApp {
                 || connected.contains(&peer.peer_id)
         });
         if self.draft.peer_links.len() >= 8 {
-            self.status = "This party has reached its eight invite limit".into();
+            self.status = "You have reached the limit of eight saved invites".into();
             return;
         }
         let Some(profile) = self
@@ -314,6 +314,7 @@ impl SettingsApp {
                 self.draft.peer_links.clear();
                 self.draft.peer_links.push(link);
                 self.shared.clear_party();
+                self.shared.set_party_status(None);
                 self.save();
                 self.status = "Joining party. Waiting for the host…".into()
             }
@@ -327,6 +328,7 @@ impl SettingsApp {
         }
         self.draft.peer_links.clear();
         self.shared.clear_party();
+        self.shared.set_party_status(None);
         self.draft.collaboration_server_enabled = true;
         self.create_invite();
     }
@@ -336,6 +338,7 @@ impl SettingsApp {
         self.draft.peer_links.clear();
         self.invite_text.clear();
         self.shared.clear_party();
+        self.shared.set_party_status(None);
         self.save();
         self.status = "You left the party".into();
     }
@@ -585,6 +588,7 @@ impl SettingsApp {
             .iter()
             .any(|p| p.connect_url.is_some());
         let members = self.shared.snapshot().party;
+        let occupancy = party_occupancy(members.len());
         Frame::new()
             .fill(colors.surface)
             .stroke(Stroke::new(1.0_f32, colors.edge))
@@ -651,11 +655,15 @@ impl SettingsApp {
             }
         });
 
+        if let Some(message) = self.shared.party_status() {
+            ui.label(RichText::new(message).strong().color(colors.accent));
+        }
+
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("PARTY ROSTER").strong().color(colors.accent));
             ui.label(
-                RichText::new(format!("{} connected", members.len()))
+                RichText::new(format!("Party {occupancy}/{}", peer::MAX_PARTY_SIZE))
                     .small()
                     .color(colors.subtitle),
             );
@@ -923,6 +931,10 @@ fn parse_school_color(value: &str) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
+fn party_occupancy(remote_members: usize) -> usize {
+    (remote_members + 1).min(peer::MAX_PARTY_SIZE)
+}
+
 fn decode_icon(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
     let decoder = png::Decoder::new(Cursor::new(bytes));
     let mut reader = decoder.read_info()?;
@@ -1133,5 +1145,12 @@ mod icon_tests {
         }
         assert_eq!(rx.try_recv(), Ok(super::TrayAction::Quit));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn party_occupancy_counts_local_wizard_and_caps_at_four() {
+        assert_eq!(super::party_occupancy(0), 1);
+        assert_eq!(super::party_occupancy(2), 3);
+        assert_eq!(super::party_occupancy(3), 4);
     }
 }

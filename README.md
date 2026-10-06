@@ -22,10 +22,21 @@ Instance A uses real Wizard101 log state. To mock A instead, add `--demo --demo-
 cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\B" --http-port 17843 --peer-port 17844 --instance-name B --demo --demo-world "Krokotopia" --demo-zone "The Oasis"
 ```
 
-Optional third instance:
+Optional third and fourth guest instances:
 
 ```powershell
 cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\C" --http-port 17845 --peer-port 17846 --instance-name C --demo --demo-world "Celestia" --demo-zone "Survey Camp"
+```
+
+```powershell
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\D" --http-port 17847 --peer-port 17848 --instance-name D --demo --demo-world "Dragonspyre" --demo-zone "The Basilica"
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\E" --http-port 17849 --peer-port 17850 --instance-name E --demo --demo-world "Mooshu" --demo-zone "Jade Palace"
+```
+
+For an optional duplicate-invite check, launch F in another PowerShell window:
+
+```powershell
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\F" --http-port 17851 --peer-port 17852 --instance-name F --demo --demo-world "Avalon" --demo-zone "Abbey Road"
 ```
 
 Open the matching tray settings window for each instance, create a different profile in each, and select it as active. On A, choose **Host Party** and copy an invite. Paste it into B and choose **Join Party**. For C, have A create another invite and paste that one into C. For this same-machine test, A advertises `127.0.0.1`; UPnP stays off.
@@ -35,8 +46,14 @@ Open each overlay in a browser or OBS Browser Source:
 - A: `http://127.0.0.1:17841/overlay`
 - B: `http://127.0.0.1:17843/overlay`
 - C: `http://127.0.0.1:17845/overlay`
+- D: `http://127.0.0.1:17847/overlay`
+- E: `http://127.0.0.1:17849/overlay`
 
 Each view must keep its own wizard prominent and render connected peers as smaller cards. On B/C, edit **Mock Wizard Location** and click **Apply location**; the other connected views should update without reconnecting. **End mock session** tests offline presence. **Leave Party** tests leave/rejoin. To test reconnect, quit and relaunch B with the same command and data directory; its saved invite should reconnect automatically. `cargo run -- --help` lists the available instance options.
+
+### Test the four-wizard Party limit
+
+Run A through E with distinct data directories and ports. Keep A as the only instance allowed to discover real Wizard101; B through E must use the demo commands above. Create a named active profile in each instance. Host on A, create three invites, then join B, C, and D. The four connected instances should each show **Party 4/4** and at most three smaller wizard cards. While A is full, create a fourth invite, paste it into E, and choose **Join Party**. E should show **Party is full**, while A-D rosters remain unchanged and no E card appears. Choose **Leave Party** on B. The server should immediately show **Party 3/4**; E automatically retries its saved invite and should join within about three seconds, returning A/C/D/E to **Party 4/4**. To exercise duplicate-ID protection, open a sixth demo instance, paste B's invite while B remains connected, and attempt to join. It must not create a second B card or exceed four total. Then leave/disconnect B and reconnect using its saved invite; it should return once. Close/disconnect a guest and confirm its slot becomes available to another invite.
 
 ## OBS Browser Source
 

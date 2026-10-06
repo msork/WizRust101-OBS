@@ -41,6 +41,7 @@ pub struct SharedState {
     tx: broadcast::Sender<OverlayState>,
     session_started: Arc<Mutex<Option<Instant>>>,
     party: Arc<Mutex<BTreeMap<String, WizardPresence>>>,
+    party_status: Arc<Mutex<Option<String>>>,
 }
 impl SharedState {
     pub fn new(config: AppConfig) -> Self {
@@ -51,6 +52,7 @@ impl SharedState {
             tx,
             session_started: Arc::new(Mutex::new(None)),
             party: Arc::new(Mutex::new(BTreeMap::new())),
+            party_status: Arc::new(Mutex::new(None)),
         }
     }
     pub fn snapshot(&self) -> OverlayState {
@@ -105,15 +107,18 @@ impl SharedState {
     pub fn local_presence(&self) -> Option<WizardPresence> {
         self.snapshot().wizard
     }
-    pub fn set_peer_presence(&self, presence: WizardPresence) {
+    pub fn set_peer_presence(&self, presence: WizardPresence) -> bool {
         if !crate::peer::valid_presence(&presence) {
-            return;
+            return false;
         }
-        self.party
-            .lock()
-            .unwrap()
-            .insert(presence.peer_id.clone(), presence);
+        let mut party = self.party.lock().unwrap();
+        if !party.contains_key(&presence.peer_id) && party.len() >= crate::peer::MAX_GUESTS {
+            return false;
+        }
+        party.insert(presence.peer_id.clone(), presence);
+        drop(party);
         self.publish_current();
+        true
     }
     pub fn remove_peer(&self, peer_id: &str) {
         if self.party.lock().unwrap().remove(peer_id).is_some() {
@@ -121,7 +126,7 @@ impl SharedState {
         }
     }
     pub fn replace_party(&self, members: Vec<WizardPresence>, local_member_id: &str) -> bool {
-        if members.len() > 9
+        if members.len() > crate::peer::MAX_PARTY_SIZE
             || members
                 .iter()
                 .any(|member| !crate::peer::valid_presence(member))
@@ -141,6 +146,9 @@ impl SharedState {
             .filter(|member| member.peer_id != local_member_id)
             .map(|member| (member.peer_id.clone(), member))
             .collect::<BTreeMap<_, _>>();
+        if roster.len() > crate::peer::MAX_GUESTS {
+            return false;
+        }
         *self.party.lock().unwrap() = roster;
         self.publish_current();
         true
@@ -158,6 +166,12 @@ impl SharedState {
         if changed {
             self.publish_current();
         }
+    }
+    pub fn set_party_status(&self, status: Option<String>) {
+        *self.party_status.lock().unwrap() = status;
+    }
+    pub fn party_status(&self) -> Option<String> {
+        self.party_status.lock().unwrap().clone()
     }
     pub fn apply(&self, event: GameEvent, catalog: &ZoneCatalog) {
         let mut s = self.state.lock().unwrap();
@@ -353,6 +367,98 @@ mod tests {
         };
         assert!(!state.replace_party(vec![guest.clone(), guest], "local"));
         assert!(state.snapshot().party.is_empty());
+    }
+
+    #[test]
+    fn party_state_caps_remote_wizards_and_allows_a_replacement_after_leave() {
+        let state = SharedState::new(AppConfig::default());
+        let presence = |peer_id: &str| WizardPresence {
+            peer_id: peer_id.into(),
+            name: format!("Wizard {peer_id}"),
+            school: "Life".into(),
+            active: true,
+            ..Default::default()
+        };
+        for id in ["one", "two", "three"] {
+            assert!(state.set_peer_presence(presence(id)));
+        }
+        assert_eq!(
+            state.snapshot().party.len() + 1,
+            crate::peer::MAX_PARTY_SIZE
+        );
+
+        let mut updated = presence("one");
+        updated.zone = Some("New Zone".into());
+        assert!(state.set_peer_presence(updated));
+        assert_eq!(state.snapshot().party.len(), 3);
+        assert!(!state.set_peer_presence(presence("four")));
+        assert_eq!(state.snapshot().party.len(), 3);
+
+        state.remove_peer("two");
+        assert!(state.set_peer_presence(presence("four")));
+        assert_eq!(state.snapshot().party.len(), 3);
+        assert!(
+            state
+                .snapshot()
+                .party
+                .iter()
+                .any(|member| member.peer_id == "four")
+        );
+    }
+
+    #[test]
+    fn party_snapshot_rejects_more_than_four_total_wizards() {
+        let state = SharedState::new(AppConfig::default());
+        let members = (0..5)
+            .map(|index| WizardPresence {
+                peer_id: format!("peer-{index}"),
+                name: format!("Wizard {index}"),
+                school: "Balance".into(),
+                ..Default::default()
+            })
+            .collect();
+        assert!(!state.replace_party(members, "local"));
+        assert!(state.snapshot().party.is_empty());
+
+        let valid_full_party = (0..crate::peer::MAX_PARTY_SIZE)
+            .map(|index| WizardPresence {
+                peer_id: if index == 0 {
+                    "local".into()
+                } else {
+                    format!("peer-{index}")
+                },
+                name: format!("Wizard {index}"),
+                school: "Balance".into(),
+                ..Default::default()
+            })
+            .collect();
+        assert!(state.replace_party(valid_full_party, "local"));
+        assert_eq!(state.snapshot().party.len(), crate::peer::MAX_GUESTS);
+    }
+
+    #[test]
+    fn party_snapshot_cannot_omit_local_member_and_smuggle_four_remote_wizards() {
+        let state = SharedState::new(AppConfig::default());
+        let members = (0..4)
+            .map(|index| WizardPresence {
+                peer_id: format!("remote-{index}"),
+                name: format!("Wizard {index}"),
+                school: "Balance".into(),
+                ..Default::default()
+            })
+            .collect();
+        assert!(!state.replace_party(members, "local"));
+        assert!(state.snapshot().party.is_empty());
+    }
+
+    #[test]
+    fn party_full_status_survives_roster_retries_until_explicitly_cleared() {
+        let state = SharedState::new(AppConfig::default());
+        state.set_party_status(Some("Party is full".into()));
+        state.clear_party();
+        assert_eq!(state.party_status().as_deref(), Some("Party is full"));
+        state.set_party_status(None);
+        assert_eq!(state.party_status(), None);
     }
 
     #[test]
