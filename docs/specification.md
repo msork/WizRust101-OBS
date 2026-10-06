@@ -25,3 +25,7 @@ Invites use a versioned `WIZPARTY1.` code, per-member random secret, host addres
 Presence and local config remain on-device except for the deliberately shared party presence. Do not share invite codes outside the intended party or publish config files. The peer destination address and network metadata are visible to network observers; Noise encrypts the peer application frames. No cloud relay, analytics, streaming account, or Twitch/YouTube/Kick API is required.
 
 Windows, Linux, and macOS are supported targets. Linux tray operation requires a desktop StatusNotifierItem host. Native UI, tray, network, and OBS/CEF acceptance on each operating system remains a release task.
+
+## Isolated developer instances
+
+For local Party testing, each process accepts `--data-dir`, `--http-port`, `--peer-port`, and `--instance-name`. The independent data directory stores only that instance's `config.json`, including its own profiles and invite credentials. Mock mode (`--demo`, optionally initialized with `--demo-world` and `--demo-zone`) does not run game-log discovery. Native mock controls set location/session state through the normal shared-state pipeline. Peer networking and authentication remain fully real. `--advertise-host 127.0.0.1` makes same-machine invites connect over loopback. See the README for copy/paste Windows PowerShell commands for two or three instances.

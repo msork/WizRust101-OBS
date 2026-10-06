@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod config;
 pub mod crossover;
 pub mod discovery;

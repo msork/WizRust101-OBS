@@ -288,6 +288,24 @@ mod tests {
     }
 
     #[test]
+    fn mock_location_controls_publish_normal_live_state_updates() {
+        let state = SharedState::new(AppConfig::default());
+        let mut updates = state.subscribe();
+        state.set_demo_state("Wizard City", "The Commons", "mock/Wizard City/The Commons");
+        let first = updates.try_recv().unwrap();
+        assert_eq!(first.world.as_deref(), Some("Wizard City"));
+        assert_eq!(first.zone.as_deref(), Some("The Commons"));
+        assert!(first.active);
+
+        state.set_demo_state("Krokotopia", "The Oasis", "mock/Krokotopia/The Oasis");
+        let changed = updates.try_recv().unwrap();
+        assert_eq!(changed.world.as_deref(), Some("Krokotopia"));
+        assert_eq!(changed.zone.as_deref(), Some("The Oasis"));
+        state.stop();
+        assert!(!updates.try_recv().unwrap().active);
+    }
+
+    #[test]
     fn party_roster_replaces_remote_members_without_replacing_local_primary() {
         use crate::config::CharacterProfile;
         let mut config = AppConfig::default();

@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver},
@@ -34,10 +35,17 @@ enum TrayAction {
     Quit,
 }
 
-pub fn run(shared: SharedState) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    shared: SharedState,
+    config_path: PathBuf,
+    http_port: u16,
+    display_name: String,
+    demo_mode: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let overlay_url = format!("http://127.0.0.1:{http_port}/overlay");
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("WizRust101-OBS • Spellbook")
+            .with_title(format!("WizRust101-OBS — {display_name}"))
             .with_inner_size([850.0, 690.0])
             .with_min_inner_size([700.0, 560.0])
             .with_visible(false),
@@ -51,6 +59,10 @@ pub fn run(shared: SharedState) -> Result<(), Box<dyn std::error::Error>> {
             Ok(Box::new(SettingsApp::new(
                 shared.clone(),
                 cc.egui_ctx.clone(),
+                config_path.clone(),
+                overlay_url.clone(),
+                display_name.clone(),
+                demo_mode,
             )))
         }),
     )?;
@@ -79,6 +91,11 @@ fn install_theme(ctx: &Context) {
 
 struct SettingsApp {
     shared: SharedState,
+    config_path: PathBuf,
+    overlay_url: String,
+    demo_mode: bool,
+    demo_world: String,
+    demo_zone: String,
     draft: AppConfig,
     tab: Tab,
     status: String,
@@ -102,17 +119,30 @@ enum LinuxCommand {
 }
 
 impl SettingsApp {
-    fn new(shared: SharedState, ctx: Context) -> Self {
+    fn new(
+        shared: SharedState,
+        ctx: Context,
+        config_path: PathBuf,
+        overlay_url: String,
+        display_name: String,
+        demo_mode: bool,
+    ) -> Self {
         let draft = shared.config.lock().unwrap().clone();
+        let initial_state = shared.snapshot();
         let selected_profile = draft
             .active_profile
             .clone()
             .or_else(|| draft.profiles.first().map(|p| p.id.clone()))
             .unwrap_or_default();
         let quit = Arc::new(Mutex::new(false));
-        let (tray_rx, tray) = install_tray(ctx, quit.clone());
+        let (tray_rx, tray) = install_tray(ctx, quit.clone(), display_name.clone());
         Self {
             shared,
+            config_path,
+            overlay_url,
+            demo_mode,
+            demo_world: initial_state.world.unwrap_or_else(|| "Wizard City".into()),
+            demo_zone: initial_state.zone.unwrap_or_else(|| "The Commons".into()),
             draft,
             tab: Tab::Overlay,
             status: "Ready • your settings stay on this device".into(),
@@ -128,7 +158,7 @@ impl SettingsApp {
         if !self.draft.collaboration_server_enabled {
             self.draft.upnp_port_forward = false;
         }
-        match self.draft.save() {
+        match self.draft.save_to_path(&self.config_path) {
             Ok(()) => {
                 *self.shared.config.lock().unwrap() = self.draft.clone();
                 self.shared.publish_current();
@@ -333,6 +363,30 @@ impl SettingsApp {
             ui.label("Reveal duration");
             ui.add(egui::Slider::new(&mut o.transition_seconds, 1.0..=20.0).suffix(" sec"));
         });
+        if self.demo_mode {
+            ui.add_space(12.0);
+            section(
+                ui,
+                "MOCK WIZARD LOCATION",
+                "These controls update the normal local state and real Party network feed.",
+            );
+            ui.horizontal(|ui| {
+                ui.label("World");
+                ui.add(egui::TextEdit::singleline(&mut self.demo_world).desired_width(160.0));
+                ui.label("Zone");
+                ui.add(egui::TextEdit::singleline(&mut self.demo_zone).desired_width(190.0));
+                if brass_button(ui, "Apply location").clicked() {
+                    let raw = format!("mock/{}/{}", self.demo_world, self.demo_zone);
+                    self.shared
+                        .set_demo_state(&self.demo_world, &self.demo_zone, &raw);
+                    self.status = "Mock wizard location updated".into();
+                }
+                if ui.button("End mock session").clicked() {
+                    self.shared.stop();
+                    self.status = "Mock wizard session ended".into();
+                }
+            });
+        }
         ui.add_space(16.0);
         section(
             ui,
@@ -340,9 +394,9 @@ impl SettingsApp {
             "Add this URL as a Browser Source • canvas 1920 x- 1080",
         );
         ui.horizontal(|ui| {
-            ui.label(RichText::new("http://127.0.0.1:17841/overlay").monospace());
+            ui.label(RichText::new(&self.overlay_url).monospace());
             if brass_button(ui, "Copy overlay URL").clicked() {
-                ui.ctx().copy_text("http://127.0.0.1:17841/overlay".into());
+                ui.ctx().copy_text(self.overlay_url.clone());
                 self.status = "OBS overlay URL copied".into();
             }
         });
@@ -747,14 +801,20 @@ fn school_color(s: &str) -> Color32 {
 #[cfg(target_os = "linux")]
 struct LinuxTray {
     tx: std::sync::mpsc::Sender<TrayAction>,
+    display_name: String,
 }
 #[cfg(target_os = "linux")]
 impl ksni::Tray for LinuxTray {
     fn id(&self) -> String {
-        "wizrust101-obs".into()
+        let suffix = self
+            .display_name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect::<String>();
+        format!("wizrust101-obs-{}-{}", suffix, std::process::id())
     }
     fn title(&self) -> String {
-        "WizRust101-OBS".into()
+        format!("WizRust101-OBS — {}", self.display_name)
     }
     fn icon_name(&self) -> String {
         "applications-games".into()
@@ -787,13 +847,20 @@ impl ksni::Tray for LinuxTray {
 }
 
 #[cfg(target_os = "linux")]
-fn install_tray(_ctx: Context, _quit: Arc<Mutex<bool>>) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(
+    _ctx: Context,
+    _quit: Arc<Mutex<bool>>,
+    display_name: String,
+) -> (Receiver<TrayAction>, TrayLifetime) {
     use ksni::blocking::TrayMethods;
     let (tx, rx) = mpsc::channel();
     let (stop_tx, stop_rx) = mpsc::channel();
     let thread_tx = tx.clone();
     std::thread::spawn(move || {
-        let service = LinuxTray { tx: thread_tx };
+        let service = LinuxTray {
+            tx: thread_tx,
+            display_name,
+        };
         if let Ok(handle) = service.assume_sni_available(true).spawn() {
             while !matches!(stop_rx.recv(), Ok(LinuxCommand::Stop) | Err(_)) {}
             handle.shutdown().wait();
@@ -803,15 +870,29 @@ fn install_tray(_ctx: Context, _quit: Arc<Mutex<bool>>) -> (Receiver<TrayAction>
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn install_tray(ctx: Context, quit: Arc<Mutex<bool>>) -> (Receiver<TrayAction>, TrayLifetime) {
+fn install_tray(
+    ctx: Context,
+    quit: Arc<Mutex<bool>>,
+    display_name: String,
+) -> (Receiver<TrayAction>, TrayLifetime) {
     use tray_icon::{
         Icon, TrayIconBuilder,
         menu::{Menu, MenuEvent, MenuItem},
     };
     let (tx, rx) = mpsc::channel();
     let menu = Menu::new();
-    let show = MenuItem::with_id("show-settings", "Open Spellbook Settings", true, None);
-    let exit = MenuItem::with_id("quit-app", "Quit WizRust101-OBS", true, None);
+    let show = MenuItem::with_id(
+        "show-settings",
+        format!("Open {display_name} Settings"),
+        true,
+        None,
+    );
+    let exit = MenuItem::with_id(
+        "quit-app",
+        format!("Quit WizRust101-OBS ({display_name})"),
+        true,
+        None,
+    );
     let _ = menu.append(&show);
     let _ = menu.append(&exit);
     let mut pixels = vec![0_u8; 32 * 32 * 4];
@@ -834,7 +915,7 @@ fn install_tray(ctx: Context, quit: Arc<Mutex<bool>>) -> (Receiver<TrayAction>, 
     }
     let icon = Icon::from_rgba(pixels, 32, 32).expect("generated tray icon");
     let tray = TrayIconBuilder::new()
-        .with_tooltip("WizRust101-OBS")
+        .with_tooltip(format!("WizRust101-OBS — {display_name}"))
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .build()

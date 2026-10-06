@@ -159,8 +159,7 @@ impl AppConfig {
             .map(|d| d.config_dir().join("config.json"))
             .ok_or("could not locate user config directory".into())
     }
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        let path = Self::path()?;
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -168,12 +167,17 @@ impl AppConfig {
         config.validate()?;
         Ok(config)
     }
-    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::load_from_path(&Self::path()?)
+    }
+    pub fn save_to_path(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
         self.validate()?;
-        let path = Self::path()?;
         fs::create_dir_all(path.parent().ok_or("config path has no parent")?)?;
         fs::write(path, serde_json::to_vec_pretty(self)?)?;
         Ok(())
+    }
+    pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.save_to_path(&Self::path()?)
     }
 }
 
@@ -213,5 +217,33 @@ mod tests {
         let config = AppConfig::default();
         assert!(!config.collaboration_server_enabled);
         assert!(!config.upnp_port_forward);
+    }
+
+    #[test]
+    fn separate_config_paths_keep_mock_instances_independent() {
+        let temp = tempfile::tempdir().unwrap();
+        let a_path = temp.path().join("instance-a").join("config.json");
+        let b_path = temp.path().join("instance-b").join("config.json");
+        let mut a = AppConfig::default();
+        a.profiles.push(CharacterProfile {
+            id: "a".into(),
+            name: "Wizard A".into(),
+            school: "Life".into(),
+            ..Default::default()
+        });
+        a.active_profile = Some("a".into());
+        a.save_to_path(&a_path).unwrap();
+        AppConfig::default().save_to_path(&b_path).unwrap();
+
+        assert_eq!(
+            AppConfig::load_from_path(&a_path).unwrap().profiles[0].name,
+            "Wizard A"
+        );
+        assert!(
+            AppConfig::load_from_path(&b_path)
+                .unwrap()
+                .profiles
+                .is_empty()
+        );
     }
 }

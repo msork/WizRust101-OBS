@@ -24,6 +24,10 @@ The transparent HTML/CSS/JS uses OBS Browser Source, so no native OBS plugin is 
 
 The eframe viewport starts hidden. Windows/macOS use `tray-icon`; Linux uses StatusNotifierItem through `ksni`. Tray activation shows settings; close hides; Quit exits. The settings window provides local profile/overlay controls and the friendly Party flow. Versioned JSON remains in the per-user config directory.
 
+Developer CLI options allow multiple independent OS processes: `--data-dir` selects an isolated config file, `--http-port` selects that instance's loopback overlay listener, `--peer-port` selects its Party listener, and `--instance-name` labels its window/tray. The optional `--advertise-host` is useful for same-machine Party tests. `--demo` bypasses all Steam/Wizard101 discovery and exposes editable world/zone controls in native settings; those changes use `SharedState::set_demo_state`, the same local state/SSE/peer-presence path as parsed log events. Each process still runs the real peer server, invite validation, Noise PSK handshake, encryption, host relay, and client reconnection loop. No Party behavior is simulated.
+
+Use unique data directories and ports for each process. Tray identifiers are instance-specific on Linux and tray labels/window titles include the supplied instance name on all platforms. OBS listeners bind only to loopback. For a single-PC test, explicitly set the host invite address to `127.0.0.1` and assign distinct HTTP and peer ports.
+
 ## Party topology and perspective
 
 The first host-authoritative v1 topology supports one host and up to eight guests. The host issues one single-participant invite at a time; each guest connects directly to the host. A guest sends only its own configured name/school and log-derived world/zone/session state. The host keeps the current guest roster and relays a full `PartySnapshot` after join, leave, or presence change and once per second. Clients replace their remote roster from the host snapshot and omit their own assigned member ID.

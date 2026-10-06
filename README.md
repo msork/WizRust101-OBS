@@ -6,7 +6,37 @@ A local Rust application that turns verified Wizard101 log observations into a q
 
 Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. Close hides the window. Choose **Quit WizRust101-OBS** to exit. Linux needs a desktop StatusNotifierItem/AppIndicator host.
 
-Run `cargo run -- --demo` to preview sample characters, worlds/zones, transitions, and session start/stop without launching Wizard101. Create a saved profile and select it as your primary wizard under **My Wizard**.
+Run `cargo run -- --demo` to use controllable mock game state without launching Wizard101 or discovering game logs. The native Overlay tab lets you edit the mock world/zone and apply it or end the mock session. Choose a saved profile under **My Wizard**; profile identity stays configured independently of the mock location.
+
+## Isolated local Party test instances (Windows PowerShell)
+
+Each process needs its own data directory and ports. Mock instances skip Wizard101/Steam log discovery entirely, but still use the real authenticated Party protocol. Start these in separate PowerShell windows from the repository root:
+
+```powershell
+cargo run -- --data-dir "$PWD\.dev-party\A" --http-port 17841 --peer-port 17842 --instance-name A --advertise-host 127.0.0.1
+```
+
+Instance A uses real Wizard101 log state. To mock A instead, add `--demo --demo-world "Wizard City" --demo-zone "The Commons"`.
+
+```powershell
+cargo run -- --data-dir "$PWD\.dev-party\B" --http-port 17843 --peer-port 17844 --instance-name B --demo --demo-world "Krokotopia" --demo-zone "The Oasis"
+```
+
+Optional third instance:
+
+```powershell
+cargo run -- --data-dir "$PWD\.dev-party\C" --http-port 17845 --peer-port 17846 --instance-name C --demo --demo-world "Celestia" --demo-zone "Survey Camp"
+```
+
+Open the matching tray settings window for each instance, create a different profile in each, and select it as active. On A, choose **Host Party** and copy an invite. Paste it into B and choose **Join Party**. For C, have A create another invite and paste that one into C. For this same-machine test, A advertises `127.0.0.1`; UPnP stays off.
+
+Open each overlay in a browser or OBS Browser Source:
+
+- A: `http://127.0.0.1:17841/overlay`
+- B: `http://127.0.0.1:17843/overlay`
+- C: `http://127.0.0.1:17845/overlay`
+
+Each view must keep its own wizard prominent and render connected peers as smaller cards. On B/C, edit **Mock Wizard Location** and click **Apply location**; the other connected views should update without reconnecting. **End mock session** tests offline presence. **Leave Party** tests leave/rejoin. To test reconnect, quit and relaunch B with the same command and data directory; its saved invite should reconnect automatically. `cargo run -- --help` lists the available instance options.
 
 ## OBS Browser Source
 
