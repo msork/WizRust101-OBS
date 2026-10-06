@@ -13,19 +13,19 @@ Run `cargo run -- --demo` to use controllable mock game state without launching 
 Each process needs its own data directory and ports. Mock instances skip Wizard101/Steam log discovery entirely, but still use the real authenticated Party protocol. Start these in separate PowerShell windows from the repository root:
 
 ```powershell
-cargo run -- --data-dir "$PWD\.dev-party\A" --http-port 17841 --peer-port 17842 --instance-name A --advertise-host 127.0.0.1
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\A" --http-port 17841 --peer-port 17842 --instance-name A --advertise-host 127.0.0.1
 ```
 
 Instance A uses real Wizard101 log state. To mock A instead, add `--demo --demo-world "Wizard City" --demo-zone "The Commons"`.
 
 ```powershell
-cargo run -- --data-dir "$PWD\.dev-party\B" --http-port 17843 --peer-port 17844 --instance-name B --demo --demo-world "Krokotopia" --demo-zone "The Oasis"
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\B" --http-port 17843 --peer-port 17844 --instance-name B --demo --demo-world "Krokotopia" --demo-zone "The Oasis"
 ```
 
 Optional third instance:
 
 ```powershell
-cargo run -- --data-dir "$PWD\.dev-party\C" --http-port 17845 --peer-port 17846 --instance-name C --demo --demo-world "Celestia" --demo-zone "Survey Camp"
+cargo run -- --data-dir "$env:LOCALAPPDATA\WizRust101-OBS-PartyTest\C" --http-port 17845 --peer-port 17846 --instance-name C --demo --demo-world "Celestia" --demo-zone "Survey Camp"
 ```
 
 Open the matching tray settings window for each instance, create a different profile in each, and select it as active. On A, choose **Host Party** and copy an invite. Paste it into B and choose **Join Party**. For C, have A create another invite and paste that one into C. For this same-machine test, A advertises `127.0.0.1`; UPnP stays off.
