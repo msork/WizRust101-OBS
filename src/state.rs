@@ -1,6 +1,6 @@
 use crate::{config::AppConfig, mapping::ZoneCatalog, parser::GameEvent};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -42,6 +42,7 @@ pub struct SharedState {
     session_started: Arc<Mutex<Option<Instant>>>,
     party: Arc<Mutex<BTreeMap<String, WizardPresence>>>,
     party_status: Arc<Mutex<Option<String>>>,
+    party_join_requests: Arc<Mutex<BTreeSet<String>>>,
 }
 impl SharedState {
     pub fn new(config: AppConfig) -> Self {
@@ -53,6 +54,7 @@ impl SharedState {
             session_started: Arc::new(Mutex::new(None)),
             party: Arc::new(Mutex::new(BTreeMap::new())),
             party_status: Arc::new(Mutex::new(None)),
+            party_join_requests: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
     pub fn snapshot(&self) -> OverlayState {
@@ -169,6 +171,15 @@ impl SharedState {
     }
     pub fn set_party_status(&self, status: Option<String>) {
         *self.party_status.lock().unwrap() = status;
+    }
+    pub fn request_party_join(&self, peer_id: String) {
+        self.party_join_requests.lock().unwrap().insert(peer_id);
+    }
+    pub fn party_join_requests(&self) -> BTreeSet<String> {
+        self.party_join_requests.lock().unwrap().clone()
+    }
+    pub fn complete_party_join_request(&self, peer_id: &str) {
+        self.party_join_requests.lock().unwrap().remove(peer_id);
     }
     pub fn party_status(&self) -> Option<String> {
         self.party_status.lock().unwrap().clone()
@@ -459,6 +470,16 @@ mod tests {
         assert_eq!(state.party_status().as_deref(), Some("Party is full"));
         state.set_party_status(None);
         assert_eq!(state.party_status(), None);
+    }
+
+    #[test]
+    fn explicit_party_join_requests_remain_pending_until_consumed() {
+        let state = SharedState::new(AppConfig::default());
+        state.request_party_join("peer-a".into());
+        assert!(state.party_join_requests().contains("peer-a"));
+        assert!(state.party_join_requests().contains("peer-a"));
+        state.complete_party_join_request("peer-a");
+        assert!(!state.party_join_requests().contains("peer-a"));
     }
 
     #[test]

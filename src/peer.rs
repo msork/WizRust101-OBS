@@ -86,6 +86,7 @@ pub fn create_pairing(peer_id: String) -> Result<(PeerCredential, [u8; 32]), Str
             connect_url: None,
             label: String::new(),
             expires_at_unix: Some(unix_now().saturating_add(INVITE_TTL_SECS)),
+            auto_reconnect: false,
         },
         secret,
     ))
@@ -177,6 +178,7 @@ pub fn import_invite(value: &str, label: String) -> Result<PeerCredential, Strin
         connect_url: Some(invite.url),
         label,
         expires_at_unix: Some(invite.expires_at_unix),
+        auto_reconnect: false,
     })
 }
 
@@ -575,21 +577,29 @@ async fn send_peer_frame(
         .is_ok()
 }
 
-pub async fn run_client_links(shared: SharedState, mut app_shutdown: watch::Receiver<bool>) {
+pub async fn run_client_links(
+    shared: SharedState,
+    config_path: std::path::PathBuf,
+    mut app_shutdown: watch::Receiver<bool>,
+) {
     let mut links: Vec<(String, JoinHandle<()>)> = Vec::new();
     loop {
         if *app_shutdown.borrow() {
             break;
         }
         let config = shared.config.lock().unwrap().clone();
-        let desired: BTreeSet<String> = config
+        let join_requests = shared.party_join_requests();
+        let configured: BTreeSet<String> = config
             .peer_links
             .iter()
-            .filter(|p| p.connect_url.is_some())
+            .filter(|p| {
+                p.connect_url.is_some()
+                    && p.expires_at_unix.is_none_or(|expires| expires > unix_now())
+            })
             .map(|p| p.peer_id.clone())
             .collect();
         links.retain(|(id, handle)| {
-            if !desired.contains(id) {
+            if !configured.contains(id) {
                 handle.abort();
                 shared.clear_party();
                 false
@@ -597,16 +607,22 @@ pub async fn run_client_links(shared: SharedState, mut app_shutdown: watch::Rece
                 !handle.is_finished()
             }
         });
-        for credential in config.peer_links.into_iter().filter(|p| {
-            p.connect_url.is_some() && p.expires_at_unix.is_none_or(|expires| expires > unix_now())
-        }) {
+        for credential in config
+            .peer_links
+            .into_iter()
+            .filter(|p| should_start_client(p, join_requests.contains(&p.peer_id)))
+        {
             if !links.iter().any(|(id, _)| id == &credential.peer_id) {
                 let state = shared.clone();
                 let id = credential.peer_id.clone();
+                let path = config_path.clone();
                 links.push((
-                    id,
-                    tokio::spawn(async move { client_loop(state, credential).await }),
+                    id.clone(),
+                    tokio::spawn(async move { client_loop(state, credential, path).await }),
                 ));
+                shared.complete_party_join_request(&id);
+            } else if credential.auto_reconnect {
+                shared.complete_party_join_request(&credential.peer_id);
             }
         }
         tokio::select! {
@@ -623,7 +639,19 @@ pub async fn run_client_links(shared: SharedState, mut app_shutdown: watch::Rece
     shared.clear_party();
 }
 
-async fn client_loop(shared: SharedState, credential: PeerCredential) {
+fn should_start_client(credential: &PeerCredential, explicitly_requested: bool) -> bool {
+    credential.connect_url.is_some()
+        && credential
+            .expires_at_unix
+            .is_none_or(|expires| expires > unix_now())
+        && (credential.auto_reconnect || explicitly_requested)
+}
+
+async fn client_loop(
+    shared: SharedState,
+    credential: PeerCredential,
+    config_path: std::path::PathBuf,
+) {
     let Some(base) = credential.connect_url.as_deref() else {
         return;
     };
@@ -637,6 +665,7 @@ async fn client_loop(shared: SharedState, credential: PeerCredential) {
     let Ok(psk): Result<[u8; 32], _> = secret_vec.try_into() else {
         return;
     };
+    let mut reconnect_authorized = credential.auto_reconnect;
     loop {
         if credential
             .expires_at_unix
@@ -676,13 +705,24 @@ async fn client_loop(shared: SharedState, credential: PeerCredential) {
                         if handshake.read_message(&reply, &mut plain).is_ok()
                             && let Ok(mut transport) = handshake.into_transport_mode()
                         {
-                            client_session(&mut socket, &shared, &credential, &mut transport).await;
+                            let welcomed = client_session(
+                                &mut socket,
+                                &shared,
+                                &credential,
+                                &mut transport,
+                                &config_path,
+                            )
+                            .await;
+                            reconnect_authorized |= welcomed;
                         }
                     }
                 }
             }
         }
         shared.clear_party();
+        if !reconnect_authorized {
+            return;
+        }
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
 }
@@ -699,13 +739,14 @@ async fn client_session(
     shared: &SharedState,
     credential: &PeerCredential,
     transport: &mut TransportState,
-) {
+    config_path: &std::path::Path,
+) -> bool {
     let mut presence_tick = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(1),
         Duration::from_secs(1),
     );
     if !send_client_presence(socket, shared, credential, transport).await {
-        return;
+        return false;
     }
     let mut welcomed = false;
     let mut last_snapshot = Instant::now();
@@ -720,7 +761,12 @@ async fn client_session(
                     let Ok(n)=transport.read_message(&data,&mut plain) else { break };
                     let Ok(frame)=serde_json::from_slice::<PeerFrame>(&plain[..n]) else { break };
                     match frame {
-                        PeerFrame::Welcome { member_id } if member_id==credential.peer_id => welcomed=true,
+                        PeerFrame::Welcome { member_id } if member_id==credential.peer_id => {
+                            if !welcomed {
+                                welcomed = true;
+                                mark_peer_established(shared, config_path, &credential.peer_id);
+                            }
+                        },
                         PeerFrame::PartySnapshot { members } if welcomed => {
                             if !shared.replace_party(members, &credential.peer_id) { break; }
                             last_snapshot = Instant::now();
@@ -734,6 +780,26 @@ async fn client_session(
         }
     }
     shared.clear_party();
+    welcomed
+}
+
+fn mark_peer_established(shared: &SharedState, config_path: &std::path::Path, peer_id: &str) {
+    let config = {
+        let mut config = shared.config.lock().unwrap();
+        if let Some(link) = config
+            .peer_links
+            .iter_mut()
+            .find(|link| link.peer_id == peer_id)
+        {
+            link.auto_reconnect = true;
+        } else {
+            return;
+        }
+        config.clone()
+    };
+    if let Err(error) = config.save_to_path(config_path) {
+        eprintln!("Could not save Party reconnect preference: {error}");
+    }
 }
 
 async fn send_client_presence(
@@ -790,8 +856,24 @@ mod tests {
         let code = encode_invite(&invite).unwrap();
         let imported = import_invite(&code, "friend".into()).unwrap();
         assert_eq!(imported.peer_id, link.peer_id);
+        assert!(!imported.auto_reconnect);
         assert!(valid_secret(&imported.secret));
         assert_eq!(imported.connect_url.as_deref(), Some(invite.url.as_str()));
+    }
+    #[test]
+    fn only_explicit_attempts_or_established_credentials_start_client_tasks() {
+        let mut credential = PeerCredential {
+            peer_id: "peer-a".into(),
+            secret: URL_SAFE_NO_PAD.encode([1_u8; 32]),
+            connect_url: Some("ws://127.0.0.1:17842/peer?peer_id=peer-a".into()),
+            ..Default::default()
+        };
+        assert!(!should_start_client(&credential, false));
+        assert!(should_start_client(&credential, true));
+        credential.auto_reconnect = true;
+        assert!(should_start_client(&credential, false));
+        credential.expires_at_unix = Some(unix_now().saturating_sub(1));
+        assert!(!should_start_client(&credential, true));
     }
     #[test]
     fn host_refuses_expired_invite_credentials() {
@@ -1207,6 +1289,159 @@ mod tests {
         assert_eq!(party_members(&host).unwrap().len(), MAX_PARTY_SIZE);
 
         let _ = shutdown.send(());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn full_initial_join_is_one_shot_but_established_client_reconnects() {
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        let mut host_config = AppConfig::default();
+        host_config.profiles.push(CharacterProfile {
+            id: "host-profile".into(),
+            name: "Host Wizard".into(),
+            school: "Fire".into(),
+            ..Default::default()
+        });
+        host_config.active_profile = Some("host-profile".into());
+        let mut guest_keys = Vec::new();
+        let mut client_credential = None;
+        for id in [
+            "established-a",
+            "established-b",
+            "established-c",
+            "new-client",
+        ] {
+            let (credential, key) = create_pairing(id.into()).unwrap();
+            if id == "new-client" {
+                host_config.peer_links.push(credential.clone());
+                client_credential = Some((credential, key));
+            } else {
+                host_config.peer_links.push(credential);
+                guest_keys.push((id, key));
+            }
+        }
+        let host = SharedState::new(host_config);
+        host.set_demo_state("Wizard City", "The Commons", "WC_Hub");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, _) = broadcast::channel(8);
+        let app = peer_router(host.clone(), shutdown.clone());
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let mut guests = Vec::new();
+        for (index, (id, key)) in guest_keys.into_iter().enumerate() {
+            let mut guest = connect_test_peer(address, id, key).await;
+            assert!(matches!(
+                read_test_frame(&mut guest).await,
+                PeerFrame::Welcome { .. }
+            ));
+            let _ = read_test_frame(&mut guest).await;
+            send_test_join(&mut guest, id, &format!("Wizard {id}"), "Life").await;
+            guests.push(guest);
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while host.snapshot().party.len() != index + 1 {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        assert_eq!(host.snapshot().party.len(), MAX_GUESTS);
+
+        let (mut client_link, _secret) = client_credential.unwrap();
+        client_link.connect_url = Some(format!("ws://{address}/peer?peer_id=new-client"));
+        let mut client_config = AppConfig::default();
+        client_config.profiles.push(CharacterProfile {
+            id: "client-profile".into(),
+            name: "New Wizard".into(),
+            school: "Ice".into(),
+            ..Default::default()
+        });
+        client_config.active_profile = Some("client-profile".into());
+        client_config.peer_links.push(client_link.clone());
+        let client_data = tempfile::tempdir().unwrap();
+        let config_path = client_data.path().join("client").join("config.json");
+        client_config.save_to_path(&config_path).unwrap();
+        let client = SharedState::new(client_config);
+        client.set_demo_state("Krokotopia", "The Oasis", "KT_Oasis");
+
+        // The initial full rejection ends the attempt and remains nonpersistent.
+        client_loop(client.clone(), client_link.clone(), config_path.clone()).await;
+        assert_eq!(client.party_status().as_deref(), Some("Party is full"));
+        assert!(!client.config.lock().unwrap().peer_links[0].auto_reconnect);
+        assert!(!AppConfig::load_from_path(&config_path).unwrap().peer_links[0].auto_reconnect);
+
+        // Free a slot. A rejected initial attempt must not enter later by itself.
+        guests[0].0.send(ClientMessage::Close(None)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while host.snapshot().party.len() != MAX_GUESTS - 1 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(3200)).await;
+        assert_eq!(host.snapshot().party.len(), MAX_GUESTS - 1);
+        assert!(
+            !host
+                .snapshot()
+                .party
+                .iter()
+                .any(|member| member.peer_id == "new-client")
+        );
+
+        // An explicit second Join succeeds and persists reconnect permission on Welcome.
+        let client_task = tokio::spawn(client_loop(
+            client.clone(),
+            client_link,
+            config_path.clone(),
+        ));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while !host
+                .snapshot()
+                .party
+                .iter()
+                .any(|member| member.peer_id == "new-client")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(client.config.lock().unwrap().peer_links[0].auto_reconnect);
+        assert!(AppConfig::load_from_path(&config_path).unwrap().peer_links[0].auto_reconnect);
+
+        // Dropping established sockets exercises the client's automatic retry path.
+        let _ = shutdown.send(());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while host
+                .snapshot()
+                .party
+                .iter()
+                .any(|member| member.peer_id == "new-client")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the old established socket should close");
+        tokio::time::timeout(Duration::from_secs(6), async {
+            while !host
+                .snapshot()
+                .party
+                .iter()
+                .any(|member| member.peer_id == "new-client")
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("a previously established client should reconnect");
+
+        client_task.abort();
         server.abort();
     }
 

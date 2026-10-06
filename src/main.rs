@@ -60,8 +60,11 @@ async fn run(options: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
         shutdown_tx.clone(),
     ));
     let peer_task = tokio::spawn(peer::supervise_server(shared.clone(), shutdown_rx.clone()));
-    let party_client_task =
-        tokio::spawn(peer::run_client_links(shared.clone(), shutdown_rx.clone()));
+    let party_client_task = tokio::spawn(peer::run_client_links(
+        shared.clone(),
+        config_path.clone(),
+        shutdown_rx.clone(),
+    ));
     let log_task = if options.demo {
         None
     } else {

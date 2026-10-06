@@ -212,12 +212,27 @@ impl SettingsApp {
         self.persist(true);
     }
     fn persist(&mut self, announce: bool) {
+        let mut saved = self.shared.config.lock().unwrap();
+        // The Party client can promote a link after an authenticated Welcome.
+        // Keep that durable fact if the visible settings draft predates it.
+        let established: std::collections::HashSet<String> = saved
+            .peer_links
+            .iter()
+            .filter(|link| link.auto_reconnect)
+            .map(|link| link.peer_id.clone())
+            .collect();
+        for link in &mut self.draft.peer_links {
+            if established.contains(&link.peer_id) {
+                link.auto_reconnect = true;
+            }
+        }
         if !self.draft.collaboration_server_enabled {
             self.draft.upnp_port_forward = false;
         }
         match self.draft.save_to_path(&self.config_path) {
             Ok(()) => {
-                *self.shared.config.lock().unwrap() = self.draft.clone();
+                *saved = self.draft.clone();
+                drop(saved);
                 self.shared.publish_current();
                 if announce {
                     self.status = "Settings saved on this device".into()
@@ -309,6 +324,7 @@ impl SettingsApp {
         }
         match peer::import_invite(&self.import_text, String::new()) {
             Ok(link) => {
+                let peer_id = link.peer_id.clone();
                 self.draft.collaboration_server_enabled = false;
                 self.draft.upnp_port_forward = false;
                 self.draft.peer_links.clear();
@@ -316,6 +332,7 @@ impl SettingsApp {
                 self.shared.clear_party();
                 self.shared.set_party_status(None);
                 self.save();
+                self.shared.request_party_join(peer_id);
                 self.status = "Joining party. Waiting for the host…".into()
             }
             Err(e) => self.status = e,

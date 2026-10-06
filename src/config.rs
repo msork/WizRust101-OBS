@@ -40,6 +40,10 @@ pub struct PeerCredential {
     pub connect_url: Option<String>,
     pub label: String,
     pub expires_at_unix: Option<u64>,
+    /// Set only after this client has received an authenticated Party welcome.
+    /// Imported invites that have never connected remain one-shot attempts.
+    #[serde(default)]
+    pub auto_reconnect: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -221,6 +225,14 @@ mod tests {
         let encoded = serde_json::to_string(&dark).unwrap();
         let restored: AppConfig = serde_json::from_str(&encoded).unwrap();
         assert_eq!(restored.ui_theme, UiTheme::Dark);
+    }
+    #[test]
+    fn old_peer_credentials_do_not_gain_reconnect_permission() {
+        let credential: PeerCredential = serde_json::from_str(
+            r#"{"peer_id":"peer-a","secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","connect_url":null,"label":"","expires_at_unix":null}"#,
+        )
+        .unwrap();
+        assert!(!credential.auto_reconnect);
     }
     #[test]
     fn rejects_arbitrary_school_names() {
