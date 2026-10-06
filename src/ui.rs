@@ -1,4 +1,5 @@
 use std::{
+    io::Cursor,
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -43,12 +44,19 @@ pub fn run(
     demo_mode: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let overlay_url = format!("http://127.0.0.1:{http_port}/overlay");
+    let (icon_rgba, icon_width, icon_height) =
+        decode_icon(include_bytes!("../assets/icons/sizes/256.png"))?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(format!("WizRust101-OBS — {display_name}"))
             .with_inner_size([850.0, 690.0])
             .with_min_inner_size([700.0, 560.0])
-            .with_visible(false),
+            .with_visible(false)
+            .with_icon(egui::IconData {
+                rgba: icon_rgba,
+                width: icon_width,
+                height: icon_height,
+            }),
         ..Default::default()
     };
     eframe::run_native(
@@ -798,6 +806,18 @@ fn school_color(s: &str) -> Color32 {
     }
 }
 
+fn decode_icon(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+    let decoder = png::Decoder::new(Cursor::new(bytes));
+    let mut reader = decoder.read_info()?;
+    let mut rgba = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut rgba)?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Err("application icons must be 8-bit RGBA PNGs".into());
+    }
+    rgba.truncate(info.buffer_size());
+    Ok((rgba, info.width, info.height))
+}
+
 #[cfg(target_os = "linux")]
 struct LinuxTray {
     tx: std::sync::mpsc::Sender<TrayAction>,
@@ -817,7 +837,28 @@ impl ksni::Tray for LinuxTray {
         format!("WizRust101-OBS — {}", self.display_name)
     }
     fn icon_name(&self) -> String {
-        "applications-games".into()
+        String::new()
+    }
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        [32_u32, 64]
+            .into_iter()
+            .filter_map(|size| {
+                let bytes: &[u8] = match size {
+                    32 => include_bytes!("../assets/icons/sizes/32.png"),
+                    _ => include_bytes!("../assets/icons/sizes/64.png"),
+                };
+                decode_icon(bytes).ok().map(|(mut data, width, height)| {
+                    for pixel in data.chunks_exact_mut(4) {
+                        pixel.rotate_right(1);
+                    }
+                    ksni::Icon {
+                        width: width as i32,
+                        height: height as i32,
+                        data,
+                    }
+                })
+            })
+            .collect()
     }
     fn activate(&mut self, _x: i32, _y: i32) {
         let _ = self.tx.send(TrayAction::Open);
@@ -895,25 +936,9 @@ fn install_tray(
     );
     let _ = menu.append(&show);
     let _ = menu.append(&exit);
-    let mut pixels = vec![0_u8; 32 * 32 * 4];
-    for y in 0..32 {
-        for x in 0..32 {
-            let dx = x as f32 - 15.5;
-            let dy = y as f32 - 15.5;
-            let inside = dx * dx + dy * dy < 210.0;
-            let gold = dx.abs() < 2.0 || dy.abs() < 2.0 || (dx - dy).abs() < 2.0;
-            let c = if !inside {
-                [0, 0, 0, 0]
-            } else if gold {
-                [228, 187, 100, 255]
-            } else {
-                [68, 45, 50, 255]
-            };
-            let i = (y * 32 + x) * 4;
-            pixels[i..i + 4].copy_from_slice(&c);
-        }
-    }
-    let icon = Icon::from_rgba(pixels, 32, 32).expect("generated tray icon");
+    let (pixels, width, height) = decode_icon(include_bytes!("../assets/icons/sizes/32.png"))
+        .expect("bundled tray icon is a valid RGBA PNG");
+    let icon = Icon::from_rgba(pixels, width, height).expect("bundled tray icon");
     let tray = TrayIconBuilder::new()
         .with_tooltip(format!("WizRust101-OBS — {display_name}"))
         .with_icon(icon)
@@ -954,4 +979,23 @@ fn install_tray(
             _icon: tray.expect("Could not create the system tray icon"),
         },
     )
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::decode_icon;
+
+    #[test]
+    fn bundled_app_icon_decodes_to_transparent_rgba() {
+        let (rgba, width, height) =
+            decode_icon(include_bytes!("../assets/icons/sizes/32.png")).unwrap();
+        assert_eq!((width, height), (32, 32));
+        assert_eq!(rgba.len(), (width * height * 4) as usize);
+        assert!(rgba.iter().skip(3).step_by(4).any(|alpha| *alpha == 0));
+    }
+
+    #[test]
+    fn icon_decoder_rejects_malformed_png() {
+        assert!(decode_icon(b"not a PNG").is_err());
+    }
 }

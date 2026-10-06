@@ -8,14 +8,19 @@ use wizrust101_obs::{
     ui, watcher,
 };
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = CliOptions::parse(env::args().skip(1))?;
     if options.help {
         print!("{HELP}");
         return Ok(());
     }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(run(options))
+}
 
+async fn run(options: CliOptions) -> Result<(), Box<dyn std::error::Error>> {
     let config_path = if let Some(data_dir) = &options.data_dir {
         fs::create_dir_all(data_dir)?;
         fs::canonicalize(data_dir)?.join("config.json")

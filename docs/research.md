@@ -44,6 +44,16 @@ Addressing is intentionally honest about direct-connect tradeoffs. The default h
 
 Sources: [Pokélink theme event documentation](https://github.com/Cysha/pokelink-web/blob/master/themes/template/readme.md), [Pokélink web-source repository](https://github.com/pokelinkapp/pokelink-web-sources/blob/master/README.md), [`igd-next` gateway external IP and mapping API](https://docs.rs/igd-next/0.17.1/igd_next/struct.Gateway.html).
 
+## Windows startup and bundled application icons
+
+The Windows startup regression was reproduced with `cargo run -- --help`, which terminated before Rust argument handling with NT status `0xC0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`). Inspecting the executable's PE import table against the actual `C:\Windows\System32\comctl32.dll` export table identified the missing import: `TaskDialogIndirect`. The imported symbol comes from the native tray/menu dependency stack (`tray-icon`/`muda`). That API is exported by the Common Controls v6 side-by-side assembly, but not by the legacy system `comctl32.dll`. This executable had no activation manifest requesting v6, so the loader selected the legacy DLL and aborted before `main`.
+
+The fix embeds a manifest dependency on `Microsoft.Windows.Common-Controls` version `6.0.0.0` as a Windows resource. `build.rs` compiles the resource with the Windows SDK `rc.exe` and includes a multi-resolution ICO made from this repository's `assets/icons/sizes/*.png`. No system DLL is copied or required. The same original icon family feeds the eframe settings window and native tray icon; the Linux StatusNotifierItem gets RGBA converted to the ARGB32 pixel order required by its protocol. The icon conversion has tests for valid bundled RGBA input and malformed PNG rejection.
+
+The diagnosis specifically compares the executable imports to the legacy System32 DLL. A Python-based recursive import check had initially appeared clean because its own v6 activation context redirected the inspected DLL to the side-by-side assembly; that result was discarded after the direct System32 export check. `cargo check` alone did not catch this loader issue because the import is valid when the v6 assembly is activated.
+
+Sources: [Microsoft application manifests and Common Controls v6](https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests), [TaskDialogIndirect](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-taskdialogindirect), [Windows Resource Compiler](https://learn.microsoft.com/en-us/windows/win32/menurc/using-resources).
+
 The bundled DB snapshot has SHA-256 `d5fa647d0e1d956d0571141b4ded64e1d22090b0625965fd79440d95099a5eb3`.
 
 ## Limits and follow-up
