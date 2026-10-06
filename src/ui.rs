@@ -337,6 +337,33 @@ fn install_theme(ctx: &Context, theme: UiTheme) {
     v.widgets.hovered.bg_fill = colors.edge;
     v.widgets.active.bg_fill = Color32::from_rgb(196, 158, 87);
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, colors.edge);
+    let control_ink = if theme == UiTheme::Dark {
+        Color32::from_rgb(255, 231, 170)
+    } else {
+        Color32::from_rgb(61, 39, 37)
+    };
+    let control_edge = if theme == UiTheme::Dark {
+        Color32::from_rgb(232, 190, 111)
+    } else {
+        Color32::from_rgb(142, 94, 42)
+    };
+    v.widgets.inactive.bg_stroke = Stroke::new(1.8_f32, control_edge);
+    v.widgets.inactive.fg_stroke = Stroke::new(2.6_f32, control_ink);
+    v.widgets.hovered.bg_fill = if theme == UiTheme::Dark {
+        Color32::from_rgb(91, 67, 59)
+    } else {
+        Color32::from_rgb(231, 208, 158)
+    };
+    v.widgets.hovered.bg_stroke = Stroke::new(2.2_f32, control_edge);
+    v.widgets.hovered.fg_stroke = Stroke::new(2.8_f32, control_ink);
+    v.widgets.active.bg_fill = if theme == UiTheme::Dark {
+        Color32::from_rgb(125, 78, 52)
+    } else {
+        Color32::from_rgb(218, 184, 112)
+    };
+    v.widgets.active.bg_stroke = Stroke::new(2.4_f32, control_edge);
+    v.widgets.active.fg_stroke = Stroke::new(3.0_f32, control_ink);
+    v.widgets.open = v.widgets.hovered;
     ctx.set_visuals(v);
     ctx.style_mut(|s| {
         s.spacing.item_spacing = egui::vec2(10.0, 9.0);
@@ -1023,9 +1050,12 @@ impl SettingsApp {
         egui::CollapsingHeader::new("Advanced address and port")
             .default_open(false)
             .show(ui, |ui| {
-                ui.checkbox(
-                    &mut self.draft.manual_address_override,
-                    "Use the address I enter below in new invites",
+                ui.add_sized(
+                    [ui.available_width(), 30.0],
+                    egui::Checkbox::new(
+                        &mut self.draft.manual_address_override,
+                        "Use the address I enter below in new invites",
+                    ),
                 );
                 ui.horizontal(|ui| {
                     ui.label("Reachable address");
@@ -1221,7 +1251,7 @@ fn setting_toggle(ui: &mut egui::Ui, label: &str, value: &mut bool, help: &str) 
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(value, "");
+                ui.add_sized([30.0, 30.0], egui::Checkbox::new(value, ""));
                 ui.vertical(|ui| {
                     ui.label(RichText::new(label).strong());
                     ui.label(
@@ -1468,10 +1498,10 @@ fn install_tray(
 #[cfg(test)]
 mod icon_tests {
     use super::{
-        activate_selected_profile, decode_icon, focus_settings_viewport, restore_settings_viewport,
-        signal_quit, window_title,
+        activate_selected_profile, decode_icon, focus_settings_viewport, install_theme,
+        restore_settings_viewport, signal_quit, window_title,
     };
-    use crate::config::{AppConfig, CharacterProfile};
+    use crate::config::{AppConfig, CharacterProfile, UiTheme};
     use eframe::egui::{Context, RawInput, ViewportCommand, ViewportId};
     use std::sync::{Arc, Mutex};
 
@@ -1506,6 +1536,23 @@ mod icon_tests {
         let focused = ctx.run(RawInput::default(), focus_settings_viewport);
         let commands = &focused.viewport_output[&ViewportId::ROOT].commands;
         assert!(matches!(commands.as_slice(), [ViewportCommand::Focus]));
+    }
+
+    #[test]
+    fn checkbox_checked_hover_and_focus_colors_are_visible_in_both_themes() {
+        for theme in [UiTheme::Light, UiTheme::Dark] {
+            let ctx = Context::default();
+            install_theme(&ctx, theme);
+            let visuals = ctx.style().visuals.clone();
+            let widgets = &visuals.widgets;
+            assert!(widgets.inactive.bg_stroke.width >= 1.8);
+            assert!(widgets.hovered.bg_stroke.width >= 2.2);
+            assert!(widgets.active.bg_stroke.width >= 2.4);
+            assert_eq!(widgets.active.fg_stroke.width, 3.0);
+            assert_ne!(widgets.inactive.fg_stroke.color, widgets.inactive.bg_fill);
+            assert_ne!(widgets.hovered.bg_stroke.color, widgets.hovered.bg_fill);
+            assert_ne!(widgets.active.fg_stroke.color, widgets.active.bg_fill);
+        }
     }
 
     #[test]

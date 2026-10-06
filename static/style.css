@@ -3,15 +3,15 @@ html, body { width: 100%; height: 100%; margin: 0; background: transparent; over
 body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 #overlay {
   position: absolute;
-  left: var(--x, 2%);
-  top: var(--y, 35%);
+  left: var(--x, .8%);
+  top: var(--y, 1%);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 7px;
   opacity: var(--opacity, .92);
-  transform: translateY(-100%) scale(var(--scale, 1));
-  transform-origin: left bottom;
+  transform: scale(var(--scale, 1));
+  transform-origin: left top;
 }
 .hidden { display: none !important; }
 .primary {
@@ -19,7 +19,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   display: flex;
   align-items: center;
   gap: clamp(10px, .65vw, 16px);
-  width: clamp(330px, 19vw, 420px);
+  width: clamp(300px, 17vw, 370px);
   min-width: 0;
   min-height: 112px;
   padding: clamp(12px, .8vw, 18px) clamp(18px, 1.1vw, 26px) clamp(12px, .8vw, 18px) clamp(14px, .85vw, 20px);

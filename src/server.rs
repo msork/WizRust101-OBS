@@ -456,9 +456,13 @@ mod tests {
         assert!(!html.contains("textContent = wizard.school"));
         assert!(html.contains("id=\"primary-school\""));
         assert!(!html.contains("party-notice"));
+        assert!(html.contains("options.x_percent ?? 0.8"));
+        assert!(html.contains("options.y_percent ?? 1"));
         let css = include_str!("../static/style.css");
         assert!(css.contains("flex-direction: column;"));
         assert!(css.contains(".party { display: flex; flex-direction: column;"));
+        assert!(css.contains("top: var(--y, 1%);"));
+        assert!(css.contains("transform-origin: left top;"));
         assert!(!css.contains(".party-notice"));
     }
 }

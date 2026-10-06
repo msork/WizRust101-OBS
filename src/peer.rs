@@ -271,14 +271,7 @@ async fn serve_until_disabled(shared: SharedState, mut app_shutdown: watch::Rece
     };
     let (shutdown, _) = broadcast::channel(1);
     let app = peer_router(shared.clone(), shutdown.clone());
-    let mut server_shutdown = shutdown.subscribe();
-    let mut server = tokio::spawn(async move {
-        let _ = axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = server_shutdown.recv().await;
-            })
-            .await;
-    });
+    let server = tokio::spawn(serve_peer_http(listener, app, shutdown.subscribe()));
     let mut renew = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(1800),
         Duration::from_secs(1800),
@@ -294,27 +287,37 @@ async fn serve_until_disabled(shared: SharedState, mut app_shutdown: watch::Rece
                 let (enabled, upnp, changed_port) = { let c=shared.config.lock().unwrap(); (c.collaboration_server_enabled, c.upnp_port_forward, c.peer_port != peer_port) }; if !enabled || changed_port || !upnp {break;}
             }
             _=tokio::time::sleep(Duration::from_millis(500))=>{
+                if server.is_finished() { break; }
                 let (enabled, upnp, changed_port) = { let c=shared.config.lock().unwrap(); (c.collaboration_server_enabled, c.upnp_port_forward, c.peer_port != peer_port) }; if !enabled || changed_port {break;}
                 if !upnp && gateway.is_some(){if let Some(g)=gateway.take(){let _=tokio::task::spawn_blocking(move||remove_mapping(g, peer_port)).await;}}
                 else if upnp && gateway.is_none(){gateway=match tokio::task::spawn_blocking(move || add_mapping(peer_port)).await{Ok(Ok(g))=>Some(g),_=>None};}
             }
-            _=&mut server=>break,
         }
     }
-    let _ = shutdown.send(());
-    if !server.is_finished()
-        && tokio::time::timeout(Duration::from_secs(3), &mut server)
-            .await
-            .is_err()
-    {
-        server.abort();
-    }
-    if !server.is_finished() {
-        server.abort();
-    }
-    let _ = server.await;
+    stop_peer_http(server, &shutdown).await;
     if let Some(g) = gateway {
         let _ = tokio::task::spawn_blocking(move || remove_mapping(g, peer_port)).await;
+    }
+}
+
+async fn serve_peer_http(
+    listener: TcpListener,
+    app: Router,
+    mut shutdown: broadcast::Receiver<()>,
+) {
+    let _ = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown.recv().await;
+        })
+        .await;
+}
+
+async fn stop_peer_http(server: JoinHandle<()>, shutdown: &broadcast::Sender<()>) {
+    let _ = shutdown.send(());
+    let mut server = server;
+    if timeout(Duration::from_secs(3), &mut server).await.is_err() {
+        server.abort();
+        let _ = server.await;
     }
 }
 
@@ -1077,6 +1080,120 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invite_from_previous_host_session_is_rejected_after_config_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_path = temp.path().join("config.json");
+        let (credential, _) = create_pairing("stale-invite".into()).unwrap();
+        let invite = invite_for(&credential, "127.0.0.1", 17842).unwrap();
+        let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
+        legacy["collaboration_server_enabled"] = true.into();
+        legacy["peer_links"] = serde_json::json!([credential]);
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let restarted_config = AppConfig::load_from_path(&config_path).unwrap();
+        assert!(!restarted_config.collaboration_server_enabled);
+        assert!(restarted_config.peer_links.is_empty());
+        let host = SharedState::new(restarted_config);
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown, _) = broadcast::channel(2);
+        let server = tokio::spawn(serve_peer_http(
+            listener,
+            peer_router(host, shutdown.clone()),
+            shutdown.subscribe(),
+        ));
+        let url = format!("ws://{address}/peer?peer_id={}", invite.peer_id);
+        let error = tokio_tungstenite::connect_async(url).await.unwrap_err();
+        assert!(matches!(
+            error,
+            tokio_tungstenite::tungstenite::Error::Http(response)
+                if response.status() == StatusCode::UNAUTHORIZED
+        ));
+        stop_peer_http(server, &shutdown).await;
+    }
+
+    #[tokio::test]
+    async fn active_party_shutdown_closes_peer_socket_and_joins_http_once() {
+        use crate::config::CharacterProfile;
+
+        let (mut credential, _) = create_pairing("shutdown-guest".into()).unwrap();
+        let mut config = AppConfig::default();
+        config.profiles.push(CharacterProfile {
+            id: "host".into(),
+            name: "Host Wizard".into(),
+            school: "Fire".into(),
+            ..Default::default()
+        });
+        config.active_profile = Some("host".into());
+        config.peer_links.push(credential.clone());
+        let host = SharedState::new(config);
+        host.set_demo_state("Wizard City", "The Commons", "WC_Hub");
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        credential.connect_url = Some(format!("ws://{address}/peer?peer_id=shutdown-guest"));
+        host.config.lock().unwrap().peer_links[0] = credential.clone();
+        let (shutdown, _) = broadcast::channel(4);
+        let server = tokio::spawn(serve_peer_http(
+            listener,
+            peer_router(host.clone(), shutdown.clone()),
+            shutdown.subscribe(),
+        ));
+        let mut guest_config = AppConfig::default();
+        guest_config.profiles.push(CharacterProfile {
+            id: "guest".into(),
+            name: "Guest Wizard".into(),
+            school: "Life".into(),
+            ..Default::default()
+        });
+        guest_config.active_profile = Some("guest".into());
+        guest_config.peer_links.push(credential);
+        let guest = SharedState::new(guest_config);
+        guest.set_demo_state("Krokotopia", "The Oasis", "KT_Oasis");
+        guest.request_party_join("shutdown-guest".into());
+        let temp = tempfile::tempdir().unwrap();
+        let (app_shutdown, app_shutdown_rx) = watch::channel(false);
+        let client_task = tokio::spawn(run_client_links(
+            guest.clone(),
+            temp.path().join("guest-config.json"),
+            app_shutdown_rx,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while host.snapshot().party.len() != 1 || guest.snapshot().party.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        app_shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), client_task)
+            .await
+            .expect("client supervisor joins its active socket task")
+            .unwrap();
+        assert!(guest.snapshot().party.is_empty());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !host.snapshot().party.is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("server removes the disconnected guest from its roster");
+        stop_peer_http(server, &shutdown).await;
+        assert!(host.snapshot().party.is_empty());
+    }
+
+    #[tokio::test]
+    async fn already_finished_peer_server_handle_is_consumed_only_once() {
+        let (shutdown, _) = broadcast::channel(1);
+        let server = tokio::spawn(async {});
+        while !server.is_finished() {
+            tokio::task::yield_now().await;
+        }
+        stop_peer_http(server, &shutdown).await;
+    }
+
+    #[tokio::test]
     async fn host_forwards_live_roster_updates_to_other_joined_clients() {
         use tokio_tungstenite::tungstenite::Message as ClientMessage;
 
@@ -1372,7 +1489,12 @@ mod tests {
         client_loop(client.clone(), client_link.clone(), config_path.clone()).await;
         assert_eq!(client.party_status().as_deref(), Some("Party is full"));
         assert!(!client.config.lock().unwrap().peer_links[0].auto_reconnect);
-        assert!(!AppConfig::load_from_path(&config_path).unwrap().peer_links[0].auto_reconnect);
+        assert!(
+            AppConfig::load_from_path(&config_path)
+                .unwrap()
+                .peer_links
+                .is_empty()
+        );
 
         // Free a slot. A rejected initial attempt must not enter later by itself.
         guests[0].0.send(ClientMessage::Close(None)).await.unwrap();
@@ -1393,7 +1515,7 @@ mod tests {
                 .any(|member| member.peer_id == "new-client")
         );
 
-        // An explicit second Join succeeds and persists reconnect permission on Welcome.
+        // An explicit second Join succeeds and enables reconnect for this app run only.
         let client_task = tokio::spawn(client_loop(
             client.clone(),
             client_link,
@@ -1412,7 +1534,12 @@ mod tests {
         .await
         .unwrap();
         assert!(client.config.lock().unwrap().peer_links[0].auto_reconnect);
-        assert!(AppConfig::load_from_path(&config_path).unwrap().peer_links[0].auto_reconnect);
+        assert!(
+            AppConfig::load_from_path(&config_path)
+                .unwrap()
+                .peer_links
+                .is_empty()
+        );
 
         // Dropping established sockets exercises the client's automatic retry path.
         let _ = shutdown.send(());

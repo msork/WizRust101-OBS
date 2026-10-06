@@ -13,11 +13,15 @@ pub struct AppConfig {
     pub profiles: Vec<CharacterProfile>,
     pub active_profile: Option<String>,
     pub overlay: OverlayConfig,
+    /// Runtime-only: hosting always requires an explicit action after launch.
+    #[serde(skip_serializing)]
     pub collaboration_server_enabled: bool,
     pub upnp_port_forward: bool,
     pub advertised_host: String,
     pub peer_port: u16,
     pub manual_address_override: bool,
+    /// Runtime-only Party invitations and client credentials are never saved.
+    #[serde(skip_serializing)]
     pub peer_links: Vec<PeerCredential>,
     #[serde(flatten)]
     pub future: serde_json::Map<String, serde_json::Value>,
@@ -101,8 +105,8 @@ impl Default for OverlayConfig {
         Self {
             character_location: true,
             zone_transition: true,
-            x_percent: 2.0,
-            y_percent: 35.0,
+            x_percent: 0.8,
+            y_percent: 1.0,
             scale: 1.0,
             opacity: 0.92,
             transition_seconds: 4.0,
@@ -177,8 +181,18 @@ impl AppConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let config: Self = serde_json::from_slice(&fs::read(path)?)?;
+        let bytes = fs::read(path)?;
+        let legacy_value: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let has_legacy_party_state = legacy_value.as_object().is_some_and(|object| {
+            object.contains_key("peer_links") || object.contains_key("collaboration_server_enabled")
+        });
+        let mut config: Self = serde_json::from_value(legacy_value)?;
+        config.collaboration_server_enabled = false;
+        config.peer_links.clear();
         config.validate()?;
+        if has_legacy_party_state {
+            config.save_to_path(path)?;
+        }
         Ok(config)
     }
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
@@ -226,6 +240,13 @@ mod tests {
         let restored: AppConfig = serde_json::from_str(&encoded).unwrap();
         assert_eq!(restored.ui_theme, UiTheme::Dark);
     }
+
+    #[test]
+    fn default_overlay_stack_is_top_anchored_over_the_shop_area() {
+        let overlay = OverlayConfig::default();
+        assert_eq!(overlay.x_percent, 0.8);
+        assert_eq!(overlay.y_percent, 1.0);
+    }
     #[test]
     fn old_peer_credentials_do_not_gain_reconnect_permission() {
         let credential: PeerCredential = serde_json::from_str(
@@ -250,6 +271,55 @@ mod tests {
         let config = AppConfig::default();
         assert!(!config.collaboration_server_enabled);
         assert!(!config.upnp_port_forward);
+    }
+
+    #[test]
+    fn party_credentials_are_runtime_only_and_old_saved_party_state_is_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.profiles.push(CharacterProfile {
+            id: "saved-wizard".into(),
+            name: "Persistent Wizard".into(),
+            school: "Ice".into(),
+            ..Default::default()
+        });
+        config.active_profile = Some("saved-wizard".into());
+        config.collaboration_server_enabled = true;
+        config.peer_links.push(PeerCredential {
+            peer_id: "old-member".into(),
+            secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into(),
+            connect_url: Some("ws://127.0.0.1:17842/peer?peer_id=old-member".into()),
+            label: "Old Guest".into(),
+            expires_at_unix: Some(u64::MAX),
+            auto_reconnect: true,
+        });
+
+        config.save_to_path(&path).unwrap();
+        let saved_json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(saved_json.get("peer_links").is_none());
+        assert!(saved_json.get("collaboration_server_enabled").is_none());
+
+        let mut legacy = saved_json;
+        legacy["collaboration_server_enabled"] = true.into();
+        legacy["peer_links"] = serde_json::json!([{
+            "peer_id": "old-member",
+            "secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "connect_url": "ws://127.0.0.1:17842/peer?peer_id=old-member",
+            "label": "Old Guest",
+            "expires_at_unix": u64::MAX,
+            "auto_reconnect": true
+        }]);
+        fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert!(!loaded.collaboration_server_enabled);
+        assert!(loaded.peer_links.is_empty());
+        assert_eq!(loaded.profiles[0].name, "Persistent Wizard");
+        let migrated: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert!(migrated.get("peer_links").is_none());
+        assert!(migrated.get("collaboration_server_enabled").is_none());
     }
 
     #[test]
