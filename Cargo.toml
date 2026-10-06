@@ -1,0 +1,39 @@
+[package]
+name = "wizrust101-obs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Local Wizard101 OBS Browser Source overlay"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+base64 = "0.22"
+directories = "6.0"
+eframe = { version = "0.33.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+futures-util = "0.3"
+igd-next = "0.17.1"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+snow = "0.10"
+steamlocate = "2.1.1"
+thiserror = "2"
+url = "2"
+tokio-tungstenite = "0.29"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.6", features = ["blocking"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = { version = "0.26.0", default-features = false, features = ["muda-common-controls-v6"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
