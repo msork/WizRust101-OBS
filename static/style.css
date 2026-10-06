@@ -27,13 +27,9 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   clip-path: polygon(0 0,97% 0,100% 50%,97% 100%,0 100%,1.5% 50%);
   box-shadow: inset 0 0 0 2px rgba(230,207,148,.19), inset 0 0 18px rgba(13,10,20,.28), 0 4px 15px #0008;
 }
-.primary > .crest:first-child { display: none; }
-.sigil-definitions { position: absolute; width: 0; height: 0; overflow: hidden; }
-.world-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 42px; height: 42px; color: #e6c879; filter: drop-shadow(0 1px 2px #0009); }
-.world-icon svg { display: block; width: 100%; height: 100%; overflow: hidden; }
-.world-icon use { stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: rgba(219,183,99,.08); }
+.world-icon { display: block; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%; object-fit: cover; filter: drop-shadow(0 1px 3px #0009); transition: opacity .2s ease, filter .25s ease; }
+.world-icon.changing { opacity: .25; }
 .primary-world-icon { align-self: center; }
-.legacy-location { display: none; }
 .primary-location { display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 0; min-height: 42px; }
 .world-name { overflow: hidden; color: #e6cd91; font-size: clamp(12px, .72vw, 16px); line-height: 1.15; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .zone-name { overflow: hidden; color: #f1e3bf; font-size: clamp(15px, .92vw, 20px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
@@ -44,12 +40,12 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .identity { overflow: hidden; margin-top: 2px; color: #efd28c; font-size: clamp(17px, .96vw, 22px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 2px 3px #000; }
 .identity.fire, .party-name.fire { color: #f2a38e; }
 .identity.ice, .party-name.ice { color: #a7d5ed; }
-.identity.storm, .party-name.storm { color: #d6c1ff; }
-.identity.myth, .party-name.myth { color: #eec887; }
+.identity.storm, .party-name.storm, .party-school.storm { color: #8bb8ff; }
+.identity.myth, .party-name.myth, .party-school.myth { color: #ffc66d; }
 .identity.life, .party-name.life { color: #a6dcab; }
-.identity.death, .party-name.death { color: #c5b7db; }
+.identity.death, .party-name.death, .party-school.death { color: #c39be8; }
+.identity.balance, .party-name.balance, .party-school.balance { color: #83d8cf; }
 .location { margin-top: 4px; color: #eddaa9; font-size: clamp(13px, .76vw, 17px); letter-spacing: .02em; text-shadow: 0 1px 3px #000; }
-.session { margin-top: 4px; color: #d2bf93; font: 10px system-ui, sans-serif; letter-spacing: .14em; }
 .party { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); align-content: end; gap: 7px; width: clamp(310px, 20vw, 440px); max-height: 360px; overflow: hidden; }
 .party:empty { display: none; }
 .party-card {
@@ -67,16 +63,18 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 }
 .party-marker { overflow: hidden; font-size: clamp(7px, .43vw, 9px); letter-spacing: .1em; text-overflow: ellipsis; white-space: nowrap; }
 .party-name { overflow: hidden; margin-top: 2px; color: #eee2c7; font-size: clamp(11px, .65vw, 14px); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.party-name.balance, .party-school { color: #d7bd83; }
-.party-school { overflow: hidden; margin-top: 1px; font-size: clamp(9px, .52vw, 11px); text-overflow: ellipsis; white-space: nowrap; }
+.party-school { overflow: hidden; margin-top: 1px; color: #d7bd83; font-size: clamp(9px, .52vw, 11px); text-overflow: ellipsis; white-space: nowrap; }
 .party-location { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 23px; margin-top: 4px; color: #d5c8ae; font-size: clamp(10px, .58vw, 12px); line-height: 1.2; }
-.party-world-icon { color: #cdb06b; }
-.party-world-icon { width: 22px; height: 22px; }
+.party-world-icon { width: 24px; height: 24px; }
 .party-location > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .arrival {
   position: fixed;
   left: 50vw;
   top: 23vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   min-width: 340px;
   padding: 15px 30px 18px;
   transform: translateX(-50%);
@@ -91,6 +89,9 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .arrival::before { left: 14px; }
 .arrival::after { right: 14px; }
 .arrival-world { color: #e2c985; font: 600 12px Georgia, serif; letter-spacing: .24em; text-transform: uppercase; }
+.arrival-icon { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
+.arrival-copy { display: flex; flex-direction: column; gap: 5px; }
+.arrival-world, .arrival-zone { text-align: left; }
 .arrival-zone { margin-top: 5px; font: 25px Georgia, serif; text-shadow: 0 2px 7px #000; }
 .arrival.show { animation: reveal var(--transition-duration, 4s) ease both; }
 .party-notice {

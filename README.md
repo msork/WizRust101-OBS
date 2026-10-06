@@ -4,7 +4,7 @@ A local Rust application that turns verified Wizard101 log observations into a q
 
 ## Start and preview
 
-Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. Close hides the window. Choose **Quit WizRust101-OBS** to exit. Linux needs a desktop StatusNotifierItem/AppIndicator host.
+Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. The tray menu shows **Open Settings** and **Quit WizRust101-OBS**. Closing the settings window hides it; Quit closes the tray and all app services. Light/Dark appearance and valid setting edits are saved locally. Linux needs a desktop StatusNotifierItem/AppIndicator host.
 
 Run `cargo run -- --demo` to use controllable mock game state without launching Wizard101 or discovering game logs. The native Overlay tab lets you edit the mock world/zone and apply it or end the mock session. Choose a saved profile under **My Wizard**; profile identity stays configured independently of the mock location.
 
@@ -48,7 +48,7 @@ In **Overlay** settings, click **Copy overlay URL**. In OBS:
 4. Set width to `1920` and height to `1080` (or your 16:9 canvas size).
 5. Keep WizRust101-OBS running while the source is in use.
 
-The transparent page displays the manually selected wizard and automatically observed location. Zone arrivals and party events use short restrained notices. Placement, scale, opacity, transition duration, and both overlay elements can be changed in settings.
+The transparent page displays the manually selected wizard and automatically observed location. It uses the world PNGs and mapping from WizRust101-RPC. The default plaque sits at the upper left below Wizard101's corner controls, away from the health and mana HUD visible in the supplied gameplay screenshot. World/location labels are omitted when unresolved, and no session timer is shown. Zone arrivals and party events use short restrained notices. Placement, scale, opacity, transition duration, and both overlay elements can be changed in settings.
 
 ## Host or join a Party
 
@@ -63,7 +63,7 @@ The first invite uses a detected local IPv4 address for same-LAN play. For inter
 
 ## Automatic data and deliberate omissions
 
-Automatic information is limited to canonical zone changes parsed from `WizardClient.log`, world/zone names resolved through WizRust101-DB, best-effort observed in-world state, and a local session duration. Character name and school are configured by the user; the log does not reliably expose selected identity.
+Automatic information is limited to canonical zone changes parsed from `WizardClient.log`, world/zone names resolved through WizRust101-DB, best-effort observed in-world state, and a local session duration used for session/presence state. Session time is not rendered in the overlay. Character name and school are configured by the user; the log does not reliably expose selected identity.
 
 Health, mana, deck/spells, combat, and other game-visible HUD information are omitted. Current quest/objective tracking is unsupported because reliable selected-quest evidence has not been verified. The app does not inject, read memory, intercept packets, OCR, or modify Wizard101.
 

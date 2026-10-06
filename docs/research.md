@@ -54,6 +54,14 @@ The diagnosis specifically compares the executable imports to the legacy System3
 
 Sources: [Microsoft application manifests and Common Controls v6](https://learn.microsoft.com/en-us/windows/win32/sbscs/application-manifests), [TaskDialogIndirect](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-taskdialogindirect), [Windows Resource Compiler](https://learn.microsoft.com/en-us/windows/win32/menurc/using-resources).
 
+## Overlay world imagery and UI acceptance
+
+The RPC sibling maintains `data/world-assets.json` with exact DB world labels mapped to asset keys and a declared `wizard101` fallback. The world PNGs live in `assets/worlds`. This implementation copies those PNGs and catalog into the OBS project unchanged, serves only fixed allowlisted asset names from `/worlds/{asset}`, and uses the same catalog for state icon keys. DB worlds without a dedicated PNG use the declared fallback key. RPC does not contain a local PNG named `wizard101.png`, so the endpoint uses this repository's existing WizRust101 app icon for that fallback. It does not copy Wizard101 game textures, logos, fonts, or extracted assets.
+
+The user's first gameplay screenshot showed the default bottom-left plaque overlapping the permanent health/mana HUD. The default position now anchors the compact plaque in the upper-left gameplay area below the corner controls. User position settings keep their existing lower-edge y-anchor convention. Session duration remains a local/Party presence value but is intentionally absent from both local and party overlay cards. Native Light/Dark mode is persisted in `AppConfig`; fields missing from older config files default to Light.
+
+Application Quit now sends one watch-channel shutdown signal. HTTP/SSE uses graceful server shutdown; log following and peer client links cancel; the Party listener closes active sockets and removes any active UPnP mapping; then the native tray is dropped (and the Linux tray service thread is joined). A bound HTTP port error points users to `--http-port` and never terminates the process that already owns the port.
+
 The bundled DB snapshot has SHA-256 `d5fa647d0e1d956d0571141b4ded64e1d22090b0625965fd79440d95099a5eb3`.
 
 ## Limits and follow-up

@@ -370,7 +370,7 @@ mod tests {
         };
         assert!(state.replace_party(vec![member.clone()], "self"));
         let first = updates.try_recv().unwrap();
-        assert_eq!(first.party[0].world_icon, "spiral");
+        assert_eq!(first.party[0].world_icon, "wizardcity");
         assert_eq!(first.party[0].zone.as_deref(), Some("The Commons"));
 
         let changed = WizardPresence {
@@ -380,7 +380,7 @@ mod tests {
         };
         assert!(state.replace_party(vec![changed], "self"));
         let second = updates.try_recv().unwrap();
-        assert_eq!(second.party[0].world_icon, "star");
+        assert_eq!(second.party[0].world_icon, "celestia");
         assert_eq!(second.party[0].zone.as_deref(), Some("Survey Camp"));
     }
 

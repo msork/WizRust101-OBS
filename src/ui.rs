@@ -5,11 +5,11 @@ use std::{
         Arc, Mutex,
         mpsc::{self, Receiver},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::{
-    config::{AppConfig, CharacterProfile, SCHOOLS},
+    config::{AppConfig, CharacterProfile, SCHOOLS, UiTheme},
     peer::{self},
     state::SharedState,
 };
@@ -17,11 +17,41 @@ use eframe::egui::{
     self, Align, Color32, ComboBox, Context, Frame, Layout, RichText, Stroke, ViewportCommand,
 };
 
-const INK: Color32 = Color32::from_rgb(47, 34, 42);
-const PAPER: Color32 = Color32::from_rgb(239, 225, 190);
-const PAPER_LIGHT: Color32 = Color32::from_rgb(249, 240, 215);
 const GOLD: Color32 = Color32::from_rgb(177, 132, 55);
 const RED: Color32 = Color32::from_rgb(119, 48, 53);
+const TRAY_OPEN_LABEL: &str = "Open Settings";
+const TRAY_QUIT_LABEL: &str = "Quit WizRust101-OBS";
+
+#[derive(Clone, Copy)]
+struct Palette {
+    ink: Color32,
+    paper: Color32,
+    surface: Color32,
+    subtitle: Color32,
+    edge: Color32,
+    accent: Color32,
+}
+
+fn palette(theme: UiTheme) -> Palette {
+    match theme {
+        UiTheme::Light => Palette {
+            ink: Color32::from_rgb(47, 34, 42),
+            paper: Color32::from_rgb(239, 225, 190),
+            surface: Color32::from_rgb(249, 240, 215),
+            subtitle: Color32::from_rgb(103, 82, 62),
+            edge: Color32::from_rgb(207, 180, 123),
+            accent: RED,
+        },
+        UiTheme::Dark => Palette {
+            ink: Color32::from_rgb(239, 226, 197),
+            paper: Color32::from_rgb(39, 31, 37),
+            surface: Color32::from_rgb(52, 41, 45),
+            subtitle: Color32::from_rgb(197, 180, 151),
+            edge: Color32::from_rgb(157, 119, 59),
+            accent: Color32::from_rgb(232, 190, 111),
+        },
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -48,7 +78,7 @@ pub fn run(
         decode_icon(include_bytes!("../assets/icons/sizes/256.png"))?;
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(format!("WizRust101-OBS — {display_name}"))
+            .with_title(window_title(&display_name))
             .with_inner_size([850.0, 690.0])
             .with_min_inner_size([700.0, 560.0])
             .with_visible(false)
@@ -63,7 +93,7 @@ pub fn run(
         "WizRust101-OBS",
         options,
         Box::new(move |cc| {
-            install_theme(&cc.egui_ctx);
+            install_theme(&cc.egui_ctx, shared.config.lock().unwrap().ui_theme);
             Ok(Box::new(SettingsApp::new(
                 shared.clone(),
                 cc.egui_ctx.clone(),
@@ -77,24 +107,36 @@ pub fn run(
     Ok(())
 }
 
-fn install_theme(ctx: &Context) {
-    let mut v = egui::Visuals::light();
-    v.panel_fill = PAPER;
-    v.window_fill = PAPER_LIGHT;
-    v.extreme_bg_color = Color32::from_rgb(255, 249, 232);
-    v.faint_bg_color = Color32::from_rgb(228, 211, 171);
-    v.override_text_color = Some(INK);
+fn install_theme(ctx: &Context, theme: UiTheme) {
+    let colors = palette(theme);
+    let mut v = match theme {
+        UiTheme::Light => egui::Visuals::light(),
+        UiTheme::Dark => egui::Visuals::dark(),
+    };
+    v.panel_fill = colors.paper;
+    v.window_fill = colors.surface;
+    v.extreme_bg_color = colors.surface;
+    v.faint_bg_color = colors.paper;
+    v.override_text_color = Some(colors.ink);
     v.selection.bg_fill = Color32::from_rgb(196, 158, 87);
-    v.widgets.noninteractive.bg_fill = PAPER;
-    v.widgets.inactive.bg_fill = Color32::from_rgb(231, 216, 180);
-    v.widgets.hovered.bg_fill = Color32::from_rgb(222, 199, 147);
+    v.widgets.noninteractive.bg_fill = colors.paper;
+    v.widgets.inactive.bg_fill = colors.surface;
+    v.widgets.hovered.bg_fill = colors.edge;
     v.widgets.active.bg_fill = Color32::from_rgb(196, 158, 87);
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, GOLD);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, colors.edge);
     ctx.set_visuals(v);
     ctx.style_mut(|s| {
         s.spacing.item_spacing = egui::vec2(10.0, 9.0);
         s.visuals.window_corner_radius = egui::CornerRadius::same(13);
     });
+}
+
+fn window_title(display_name: &str) -> String {
+    if display_name == "WizRust101-OBS" {
+        display_name.to_owned()
+    } else {
+        format!("WizRust101-OBS - {display_name}")
+    }
 }
 
 struct SettingsApp {
@@ -107,6 +149,7 @@ struct SettingsApp {
     draft: AppConfig,
     tab: Tab,
     status: String,
+    last_autosave: Instant,
     invite_text: String,
     import_text: String,
     selected_profile: String,
@@ -116,7 +159,10 @@ struct SettingsApp {
 }
 enum TrayLifetime {
     #[cfg(target_os = "linux")]
-    Linux(std::sync::mpsc::Sender<LinuxCommand>),
+    Linux {
+        stop: std::sync::mpsc::Sender<LinuxCommand>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    },
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     Native { _icon: tray_icon::TrayIcon },
 }
@@ -154,6 +200,7 @@ impl SettingsApp {
             draft,
             tab: Tab::Overlay,
             status: "Ready • your settings stay on this device".into(),
+            last_autosave: Instant::now(),
             invite_text: String::new(),
             import_text: String::new(),
             selected_profile,
@@ -163,6 +210,9 @@ impl SettingsApp {
         }
     }
     fn save(&mut self) {
+        self.persist(true);
+    }
+    fn persist(&mut self, announce: bool) {
         if !self.draft.collaboration_server_enabled {
             self.draft.upnp_port_forward = false;
         }
@@ -170,9 +220,12 @@ impl SettingsApp {
             Ok(()) => {
                 *self.shared.config.lock().unwrap() = self.draft.clone();
                 self.shared.publish_current();
-                self.status = "Saved to your local configuration".into()
+                if announce {
+                    self.status = "Settings saved on this device".into()
+                }
             }
-            Err(e) => self.status = format!("Could not save settings: {e}"),
+            Err(e) if announce => self.status = format!("Could not save settings: {e}"),
+            Err(_) => {}
         }
     }
     fn profile_mut(&mut self) -> Option<&mut CharacterProfile> {
@@ -288,6 +341,7 @@ impl SettingsApp {
         self.status = "You left the party".into();
     }
     fn top(&mut self, ui: &mut egui::Ui) {
+        let colors = palette(self.draft.ui_theme);
         ui.horizontal(|ui| {
             sigil(ui);
             ui.vertical(|ui| {
@@ -295,22 +349,22 @@ impl SettingsApp {
                     RichText::new("WIZRUST101 • OBS SPELLBOOK")
                         .size(22.0)
                         .strong()
-                        .color(RED),
+                        .color(colors.accent),
                 );
                 ui.label(
-                    RichText::new("A quiet companion for your Wizard101 stream")
+                    RichText::new("Character and location for your Wizard101 stream")
                         .size(13.0)
-                        .color(Color32::from_rgb(102, 81, 59)),
+                        .color(colors.subtitle),
                 );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if brass_button(ui, "Save changes").clicked() {
-                    self.save();
-                }
                 if ui.button("Minimize to tray").clicked() {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Visible(false));
                 }
-            })
+                ui.selectable_value(&mut self.draft.ui_theme, UiTheme::Dark, "Dark");
+                ui.selectable_value(&mut self.draft.ui_theme, UiTheme::Light, "Light");
+                ui.label(RichText::new("Appearance").small().color(colors.subtitle));
+            });
         });
         ui.add_space(12.0);
         ui.separator();
@@ -318,14 +372,16 @@ impl SettingsApp {
             for (tab, label) in [
                 (Tab::Overlay, "Overlay"),
                 (Tab::Wizard, "My Wizard"),
-                (Tab::Party, "Party & Invitations"),
+                (Tab::Party, "Party"),
             ] {
                 let selected = self.tab == tab;
                 let response = ui.selectable_label(
                     selected,
-                    RichText::new(label)
-                        .strong()
-                        .color(if selected { RED } else { INK }),
+                    RichText::new(label).strong().color(if selected {
+                        colors.accent
+                    } else {
+                        colors.ink
+                    }),
                 );
                 if response.clicked() {
                     self.tab = tab;
@@ -338,7 +394,7 @@ impl SettingsApp {
         section(
             ui,
             "THE STREAM CANVAS",
-            "Keep the game in view; let the overlay sit lightly at the edge.",
+            "Keep the game visible with a compact overlay near the edge.",
         );
         ui.add_space(8.0);
         let o = &mut self.draft.overlay;
@@ -346,19 +402,19 @@ impl SettingsApp {
             ui,
             "Character and location plaque",
             &mut o.character_location,
-            "Your chosen wizard with the live world and zone.",
+            "Show your chosen wizard with the live world and location.",
         );
         setting_toggle(
             ui,
-            "Zone arrival flourish",
+            "Zone transition",
             &mut o.zone_transition,
-            "A brief location reveal when a new zone is observed.",
+            "Briefly reveal a new location when the game changes zones.",
         );
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label("Position • X");
+            ui.label("X position");
             ui.add(egui::Slider::new(&mut o.x_percent, 0.0..=100.0).suffix("%"));
-            ui.label("Y");
+            ui.label("Y position");
             ui.add(egui::Slider::new(&mut o.y_percent, 0.0..=100.0).suffix("%"));
         });
         ui.horizontal(|ui| {
@@ -368,30 +424,30 @@ impl SettingsApp {
             ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
         });
         ui.horizontal(|ui| {
-            ui.label("Reveal duration");
+            ui.label("Transition duration");
             ui.add(egui::Slider::new(&mut o.transition_seconds, 1.0..=20.0).suffix(" sec"));
         });
         if self.demo_mode {
             ui.add_space(12.0);
             section(
                 ui,
-                "MOCK WIZARD LOCATION",
-                "These controls update the normal local state and real Party network feed.",
+                "MOCK LOCATION",
+                "Preview world and location changes without opening Wizard101.",
             );
             ui.horizontal(|ui| {
                 ui.label("World");
                 ui.add(egui::TextEdit::singleline(&mut self.demo_world).desired_width(160.0));
-                ui.label("Zone");
+                ui.label("Location");
                 ui.add(egui::TextEdit::singleline(&mut self.demo_zone).desired_width(190.0));
                 if brass_button(ui, "Apply location").clicked() {
                     let raw = format!("mock/{}/{}", self.demo_world, self.demo_zone);
                     self.shared
                         .set_demo_state(&self.demo_world, &self.demo_zone, &raw);
-                    self.status = "Mock wizard location updated".into();
+                    self.status = "Mock location updated".into();
                 }
                 if ui.button("End mock session").clicked() {
                     self.shared.stop();
-                    self.status = "Mock wizard session ended".into();
+                    self.status = "Mock session ended".into();
                 }
             });
         }
@@ -399,13 +455,13 @@ impl SettingsApp {
         section(
             ui,
             "OBS BROWSER SOURCE",
-            "Add this URL as a Browser Source • canvas 1920 x- 1080",
+            "Add this URL as a Browser Source at your canvas resolution.",
         );
         ui.horizontal(|ui| {
             ui.label(RichText::new(&self.overlay_url).monospace());
             if brass_button(ui, "Copy overlay URL").clicked() {
                 ui.ctx().copy_text(self.overlay_url.clone());
-                self.status = "OBS overlay URL copied".into();
+                self.status = "Overlay URL copied".into();
             }
         });
     }
@@ -413,7 +469,7 @@ impl SettingsApp {
         section(
             ui,
             "YOUR CHARACTER",
-            "Identity is always supplied by you; the log does not reliably identify the selected wizard.",
+            "Enter the character name exactly as it appears in Wizard101. This name and school are configured here, not detected from the game.",
         );
         ui.horizontal(|ui| {
             ui.label("Saved profile");
@@ -427,11 +483,15 @@ impl SettingsApp {
                         .unwrap_or("Choose or create a profile"),
                 )
                 .show_ui(ui, |ui| {
-                    for p in &self.draft.profiles {
-                        ui.selectable_value(&mut self.selected_profile, p.id.clone(), &p.name);
+                    for profile in &self.draft.profiles {
+                        ui.selectable_value(
+                            &mut self.selected_profile,
+                            profile.id.clone(),
+                            &profile.name,
+                        );
                     }
                 });
-            if brass_button(ui, "+ New wizard").clicked() {
+            if brass_button(ui, "Add character").clicked() {
                 let id = format!("profile-{}", rand::random::<u32>());
                 self.draft.profiles.push(CharacterProfile {
                     id: id.clone(),
@@ -442,60 +502,73 @@ impl SettingsApp {
                 self.selected_profile = id;
             }
         });
-        if let Some(p) = self.profile_mut() {
+        let mut save_profile = false;
+        let mut remove_profile = false;
+        if let Some(profile) = self.profile_mut() {
             ui.add_space(12.0);
-            ui.label("WIZARD NAME");
+            ui.label("CHARACTER NAME");
             ui.add(
-                egui::TextEdit::singleline(&mut p.name)
-                    .hint_text("Enter the character name shown on stream")
+                egui::TextEdit::singleline(&mut profile.name)
+                    .hint_text("Name shown in Wizard101")
                     .desired_width(460.0),
             );
             ui.add_space(8.0);
             ui.label("SCHOOL");
             ComboBox::from_id_salt("school")
-                .selected_text(&p.school)
+                .selected_text(&profile.school)
                 .show_ui(ui, |ui| {
                     for school in SCHOOLS {
-                        ui.selectable_value(&mut p.school, school.to_string(), school);
+                        ui.selectable_value(&mut profile.school, school.to_string(), school);
                     }
                 });
             ui.horizontal(|ui| {
-                ui.label("School sigil");
-                let color = school_color(&p.school);
+                ui.label("Chosen school");
+                let color = school_color(&profile.school);
                 ui.painter().circle_filled(
                     ui.cursor().left_top() + egui::vec2(12.0, 12.0),
                     10.0,
                     color,
                 );
                 ui.add_space(28.0);
-                ui.label(RichText::new(&p.school).strong().color(color));
+                ui.label(RichText::new(&profile.school).strong().color(color));
             });
-            if brass_button(ui, "Make primary wizard").clicked() {
+            save_profile = brass_button(ui, "Save Profile").clicked();
+            remove_profile = ui.button("Remove Profile").clicked();
+            if ui.button("Use as active character").clicked() {
                 self.draft.active_profile = Some(self.selected_profile.clone());
-                self.status = "Primary wizard selected".into();
-            }
-            if ui.button("Remove this profile").clicked() {
-                self.draft
-                    .profiles
-                    .retain(|p| p.id != self.selected_profile);
-                self.selected_profile = self
-                    .draft
-                    .profiles
-                    .first()
-                    .map(|p| p.id.clone())
-                    .unwrap_or_default();
-                self.draft.active_profile = self.draft.profiles.first().map(|p| p.id.clone());
+                self.status = "Active character selected".into();
             }
         } else {
             ui.add_space(16.0);
-            ui.label("Create a saved wizard profile to personalize the overlay.");
+            ui.label("Add a character profile to set the name and school for your overlay.");
+        }
+        if save_profile {
+            self.save();
+        }
+        if remove_profile {
+            self.draft
+                .profiles
+                .retain(|profile| profile.id != self.selected_profile);
+            self.selected_profile = self
+                .draft
+                .profiles
+                .first()
+                .map(|profile| profile.id.clone())
+                .unwrap_or_default();
+            self.draft.active_profile = self
+                .draft
+                .profiles
+                .first()
+                .map(|profile| profile.id.clone());
+            self.save();
         }
     }
     fn party_ui(&mut self, ui: &mut egui::Ui) {
+        let colors = palette(self.draft.ui_theme);
         section(
             ui,
             "YOUR WIZARDS, TOGETHER",
-            "Share a small live roster while every stream keeps its own wizard in front.",
+            "Share a live roster while each stream keeps its own wizard in front.",
         );
         ui.add_space(10.0);
         let hosting = self.draft.collaboration_server_enabled;
@@ -506,13 +579,12 @@ impl SettingsApp {
             .any(|p| p.connect_url.is_some());
         let members = self.shared.snapshot().party;
         Frame::new()
-            .fill(PAPER_LIGHT)
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(207, 180, 123)))
+            .fill(colors.surface)
+            .stroke(Stroke::new(1.0_f32, colors.edge))
             .corner_radius(egui::CornerRadius::same(10))
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✧").size(24.0).color(GOLD));
                     ui.vertical(|ui| {
                         let invite_expired = self.draft.peer_links.iter().any(|peer| {
                             peer.connect_url.is_some()
@@ -531,8 +603,8 @@ impl SettingsApp {
                         } else {
                             ("No Party Yet", "Host a party or paste an invite to join")
                         };
-                        ui.label(RichText::new(title).strong().color(RED));
-                        ui.label(RichText::new(detail).small().color(INK));
+                        ui.label(RichText::new(title).strong().color(colors.accent));
+                        ui.label(RichText::new(detail).small().color(colors.subtitle));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if hosting {
@@ -560,7 +632,7 @@ impl SettingsApp {
             });
 
         ui.add_space(12.0);
-        ui.label(RichText::new("JOIN A PARTY").strong().color(RED));
+        ui.label(RichText::new("JOIN A PARTY").strong().color(colors.accent));
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.import_text)
@@ -574,18 +646,18 @@ impl SettingsApp {
 
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("PARTY ROSTER").strong().color(RED));
+            ui.label(RichText::new("PARTY ROSTER").strong().color(colors.accent));
             ui.label(
                 RichText::new(format!("{} connected", members.len()))
                     .small()
-                    .color(INK),
+                    .color(colors.subtitle),
             );
         });
         if members.is_empty() {
             ui.label(
                 RichText::new("Connected wizards will appear here.")
                     .small()
-                    .color(INK),
+                    .color(colors.subtitle),
             );
         } else {
             for member in &members {
@@ -603,7 +675,7 @@ impl SettingsApp {
                     ui.label(RichText::new(format!("- {}", member.school)).small());
                     let status = if member.active {
                         format!(
-                            "Online - {}",
+                            "In game: {}",
                             [member.world.as_deref(), member.zone.as_deref()]
                                 .into_iter()
                                 .flatten()
@@ -611,9 +683,9 @@ impl SettingsApp {
                                 .join(" - ")
                         )
                     } else {
-                        "Online - between worlds".into()
+                        "Connected".into()
                     };
-                    ui.label(RichText::new(status).small().color(INK));
+                    ui.label(RichText::new(status).small().color(colors.subtitle));
                 });
             }
         }
@@ -638,7 +710,7 @@ impl SettingsApp {
                             "Invite sent - waiting to join"
                         })
                         .small()
-                        .color(Color32::from_rgb(110, 89, 67)),
+                        .color(colors.subtitle),
                     );
                 }
             }
@@ -675,6 +747,7 @@ impl SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        install_theme(ctx, self.draft.ui_theme);
         if *self.quit.lock().unwrap() {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
@@ -690,20 +763,20 @@ impl eframe::App for SettingsApp {
                     ctx.send_viewport_cmd(ViewportCommand::Focus);
                 }
                 #[cfg(target_os = "linux")]
-                TrayAction::Quit => *self.quit.lock().unwrap() = true,
+                TrayAction::Quit => signal_quit(&self.quit, ctx),
             }
         }
         egui::TopBottomPanel::top("spellbook-top")
             .frame(
                 Frame::new()
-                    .fill(PAPER_LIGHT)
+                    .fill(palette(self.draft.ui_theme).surface)
                     .inner_margin(egui::Margin::symmetric(20, 15)),
             )
             .show(ctx, |ui| self.top(ui));
         egui::CentralPanel::default()
             .frame(
                 Frame::new()
-                    .fill(PAPER)
+                    .fill(palette(self.draft.ui_theme).paper)
                     .inner_margin(egui::Margin::symmetric(25, 18)),
             )
             .show(ctx, |ui| match self.tab {
@@ -714,42 +787,74 @@ impl eframe::App for SettingsApp {
         egui::TopBottomPanel::bottom("status")
             .frame(
                 Frame::new()
-                    .fill(PAPER_LIGHT)
+                    .fill(palette(self.draft.ui_theme).surface)
                     .inner_margin(egui::Margin::symmetric(20, 8)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✦").color(GOLD));
-                    ui.label(RichText::new(&self.status).small().color(INK));
+                    ui.label(
+                        RichText::new(&self.status)
+                            .small()
+                            .color(palette(self.draft.ui_theme).subtitle),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("Quit WizRust101-OBS").clicked() {
-                            *self.quit.lock().unwrap() = true;
+                        if ui.small_button(TRAY_QUIT_LABEL).clicked() {
+                            signal_quit(&self.quit, ctx);
                         }
                     });
                 });
             });
         ctx.request_repaint_after(Duration::from_millis(180));
+        let saved = self.shared.config.lock().unwrap().clone();
+        if self.draft != saved
+            && self.draft.validate().is_ok()
+            && self.last_autosave.elapsed() >= Duration::from_millis(500)
+        {
+            self.persist(false);
+            self.last_autosave = Instant::now();
+        }
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         #[cfg(target_os = "linux")]
-        if let TrayLifetime::Linux(tx) = &self._tray {
-            let _ = tx.send(LinuxCommand::Stop);
+        if let TrayLifetime::Linux { stop, .. } = &self._tray {
+            let _ = stop.send(LinuxCommand::Stop);
         }
     }
 }
 
+impl Drop for TrayLifetime {
+    fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let TrayLifetime::Linux { stop, thread } = self {
+            let _ = stop.send(LinuxCommand::Stop);
+            if let Some(thread) = thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+}
+
+fn signal_quit(quit: &Arc<Mutex<bool>>, ctx: &Context) {
+    *quit.lock().unwrap() = true;
+    ctx.send_viewport_cmd(ViewportCommand::Close);
+    ctx.request_repaint();
+}
+
 fn section(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).size(16.0).strong().color(RED));
-    ui.label(
-        RichText::new(subtitle)
-            .size(12.0)
-            .color(Color32::from_rgb(103, 82, 62)),
-    );
+    let title_color = if ui.visuals().dark_mode {
+        Color32::from_rgb(232, 190, 111)
+    } else {
+        RED
+    };
+    let subtitle_color = ui.visuals().text_color().gamma_multiply(0.78);
+    ui.label(RichText::new(title).size(16.0).strong().color(title_color));
+    ui.label(RichText::new(subtitle).size(12.0).color(subtitle_color));
 }
 fn setting_toggle(ui: &mut egui::Ui, label: &str, value: &mut bool, help: &str) {
+    let visuals = ui.visuals().clone();
     Frame::new()
-        .fill(PAPER_LIGHT)
-        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(207, 180, 123)))
+        .fill(visuals.window_fill)
+        .stroke(visuals.widgets.noninteractive.bg_stroke)
         .corner_radius(egui::CornerRadius::same(9))
         .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
@@ -760,15 +865,20 @@ fn setting_toggle(ui: &mut egui::Ui, label: &str, value: &mut bool, help: &str) 
                     ui.label(
                         RichText::new(help)
                             .small()
-                            .color(Color32::from_rgb(103, 82, 62)),
+                            .color(visuals.text_color().gamma_multiply(0.78)),
                     );
                 });
             });
         });
 }
 fn brass_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let text_color = if ui.visuals().dark_mode {
+        Color32::from_rgb(250, 236, 204)
+    } else {
+        Color32::from_rgb(249, 240, 215)
+    };
     ui.add(
-        egui::Button::new(RichText::new(label).strong().color(PAPER_LIGHT))
+        egui::Button::new(RichText::new(label).strong().color(text_color))
             .fill(RED)
             .stroke(Stroke::new(1.0_f32, GOLD))
             .corner_radius(egui::CornerRadius::same(8)),
@@ -798,11 +908,11 @@ fn school_color(s: &str) -> Color32 {
     match s {
         "Fire" => Color32::from_rgb(159, 54, 47),
         "Ice" => Color32::from_rgb(65, 119, 163),
-        "Storm" => Color32::from_rgb(111, 94, 164),
-        "Myth" => Color32::from_rgb(198, 145, 56),
+        "Storm" => Color32::from_rgb(54, 96, 171),
+        "Myth" => Color32::from_rgb(171, 97, 18),
         "Life" => Color32::from_rgb(67, 126, 82),
-        "Death" => Color32::from_rgb(75, 72, 92),
-        _ => Color32::from_rgb(168, 122, 48),
+        "Death" => Color32::from_rgb(104, 68, 137),
+        _ => Color32::from_rgb(27, 126, 130),
     }
 }
 
@@ -834,7 +944,7 @@ impl ksni::Tray for LinuxTray {
         format!("wizrust101-obs-{}-{}", suffix, std::process::id())
     }
     fn title(&self) -> String {
-        format!("WizRust101-OBS — {}", self.display_name)
+        "WizRust101-OBS".into()
     }
     fn icon_name(&self) -> String {
         String::new()
@@ -867,7 +977,7 @@ impl ksni::Tray for LinuxTray {
         use ksni::menu::StandardItem;
         let tx = self.tx.clone();
         let open = StandardItem {
-            label: "Open Spellbook Settings".into(),
+            label: TRAY_OPEN_LABEL.into(),
             icon_name: "preferences-system".into(),
             activate: Box::new(move |_| {
                 let _ = tx.send(TrayAction::Open);
@@ -876,7 +986,7 @@ impl ksni::Tray for LinuxTray {
         };
         let tx = self.tx.clone();
         let quit = StandardItem {
-            label: "Quit WizRust101-OBS".into(),
+            label: TRAY_QUIT_LABEL.into(),
             icon_name: "application-exit".into(),
             activate: Box::new(move |_| {
                 let _ = tx.send(TrayAction::Quit);
@@ -897,7 +1007,7 @@ fn install_tray(
     let (tx, rx) = mpsc::channel();
     let (stop_tx, stop_rx) = mpsc::channel();
     let thread_tx = tx.clone();
-    std::thread::spawn(move || {
+    let tray_thread = std::thread::spawn(move || {
         let service = LinuxTray {
             tx: thread_tx,
             display_name,
@@ -907,14 +1017,20 @@ fn install_tray(
             handle.shutdown().wait();
         }
     });
-    (rx, TrayLifetime::Linux(stop_tx))
+    (
+        rx,
+        TrayLifetime::Linux {
+            stop: stop_tx,
+            thread: Some(tray_thread),
+        },
+    )
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 fn install_tray(
     ctx: Context,
     quit: Arc<Mutex<bool>>,
-    display_name: String,
+    _display_name: String,
 ) -> (Receiver<TrayAction>, TrayLifetime) {
     use tray_icon::{
         Icon, TrayIconBuilder,
@@ -922,25 +1038,15 @@ fn install_tray(
     };
     let (tx, rx) = mpsc::channel();
     let menu = Menu::new();
-    let show = MenuItem::with_id(
-        "show-settings",
-        format!("Open {display_name} Settings"),
-        true,
-        None,
-    );
-    let exit = MenuItem::with_id(
-        "quit-app",
-        format!("Quit WizRust101-OBS ({display_name})"),
-        true,
-        None,
-    );
+    let show = MenuItem::with_id("show-settings", TRAY_OPEN_LABEL, true, None);
+    let exit = MenuItem::with_id("quit-app", TRAY_QUIT_LABEL, true, None);
     let _ = menu.append(&show);
     let _ = menu.append(&exit);
     let (pixels, width, height) = decode_icon(include_bytes!("../assets/icons/sizes/32.png"))
         .expect("bundled tray icon is a valid RGBA PNG");
     let icon = Icon::from_rgba(pixels, width, height).expect("bundled tray icon");
     let tray = TrayIconBuilder::new()
-        .with_tooltip(format!("WizRust101-OBS — {display_name}"))
+        .with_tooltip("WizRust101-OBS")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .build()
@@ -955,8 +1061,7 @@ fn install_tray(
             ctx_menu.request_repaint();
         }
         "quit-app" => {
-            *quit_menu.lock().unwrap() = true;
-            ctx_menu.request_repaint();
+            signal_quit(&quit_menu, &ctx_menu);
         }
         _ => {}
     }));
@@ -983,7 +1088,24 @@ fn install_tray(
 
 #[cfg(test)]
 mod icon_tests {
-    use super::decode_icon;
+    use super::{decode_icon, signal_quit, window_title};
+    use eframe::egui::Context;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn tray_labels_are_short_and_hide_http_details() {
+        assert_eq!(super::TRAY_OPEN_LABEL, "Open Settings");
+        assert_eq!(super::TRAY_QUIT_LABEL, "Quit WizRust101-OBS");
+        assert_eq!(window_title("WizRust101-OBS"), "WizRust101-OBS");
+        assert!(!window_title("WizRust101-OBS").contains("HTTP"));
+    }
+
+    #[test]
+    fn quit_action_requests_app_close() {
+        let quit = Arc::new(Mutex::new(false));
+        signal_quit(&quit, &Context::default());
+        assert!(*quit.lock().unwrap());
+    }
 
     #[test]
     fn bundled_app_icon_decodes_to_transparent_rgba() {

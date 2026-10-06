@@ -20,6 +20,7 @@ use futures_util::{SinkExt, StreamExt};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use snow::{Builder, TransportState, params::NoiseParams};
+use tokio::sync::watch;
 use tokio::{
     net::TcpListener,
     sync::{Semaphore, broadcast},
@@ -227,17 +228,23 @@ pub fn valid_presence(p: &WizardPresence) -> bool {
         && p.session_seconds <= 30 * 24 * 60 * 60
 }
 
-pub async fn supervise_server(shared: SharedState) {
+pub async fn supervise_server(shared: SharedState, mut app_shutdown: watch::Receiver<bool>) {
     loop {
+        if *app_shutdown.borrow() {
+            return;
+        }
         let enabled = { shared.config.lock().unwrap().collaboration_server_enabled };
         if enabled {
-            serve_until_disabled(shared.clone()).await;
+            serve_until_disabled(shared.clone(), app_shutdown.clone()).await;
         }
-        tokio::time::sleep(Duration::from_millis(900)).await;
+        tokio::select! {
+            _ = app_shutdown.changed() => return,
+            _ = tokio::time::sleep(Duration::from_millis(900)) => {}
+        }
     }
 }
 
-async fn serve_until_disabled(shared: SharedState) {
+async fn serve_until_disabled(shared: SharedState, mut app_shutdown: watch::Receiver<bool>) {
     let peer_port = { shared.config.lock().unwrap().peer_port };
     let listener = match TcpListener::bind((Ipv4Addr::UNSPECIFIED, peer_port)).await {
         Ok(listener) => listener,
@@ -260,8 +267,13 @@ async fn serve_until_disabled(shared: SharedState) {
     };
     let (shutdown, _) = broadcast::channel(1);
     let app = peer_router(shared.clone(), shutdown.clone());
+    let mut server_shutdown = shutdown.subscribe();
     let mut server = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = server_shutdown.recv().await;
+            })
+            .await;
     });
     let mut renew = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(1800),
@@ -269,6 +281,7 @@ async fn serve_until_disabled(shared: SharedState) {
     );
     loop {
         tokio::select! {
+            _ = app_shutdown.changed() => break,
             _=renew.tick()=>{
                 if gateway.is_some() && shared.config.lock().unwrap().upnp_port_forward {
                     if let Some(g)=gateway.take(){let _=tokio::task::spawn_blocking(move||remove_mapping(g, peer_port)).await;}
@@ -285,7 +298,17 @@ async fn serve_until_disabled(shared: SharedState) {
         }
     }
     let _ = shutdown.send(());
-    server.abort();
+    if !server.is_finished()
+        && tokio::time::timeout(Duration::from_secs(3), &mut server)
+            .await
+            .is_err()
+    {
+        server.abort();
+    }
+    if !server.is_finished() {
+        server.abort();
+    }
+    let _ = server.await;
     if let Some(g) = gateway {
         let _ = tokio::task::spawn_blocking(move || remove_mapping(g, peer_port)).await;
     }
@@ -543,9 +566,12 @@ async fn send_peer_frame(
         .is_ok()
 }
 
-pub async fn run_client_links(shared: SharedState) {
+pub async fn run_client_links(shared: SharedState, mut app_shutdown: watch::Receiver<bool>) {
     let mut links: Vec<(String, JoinHandle<()>)> = Vec::new();
     loop {
+        if *app_shutdown.borrow() {
+            break;
+        }
         let config = shared.config.lock().unwrap().clone();
         let desired: BTreeSet<String> = config
             .peer_links
@@ -574,8 +600,18 @@ pub async fn run_client_links(shared: SharedState) {
                 ));
             }
         }
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::select! {
+            _ = app_shutdown.changed() => break,
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+        }
     }
+    for (_, handle) in &links {
+        handle.abort();
+    }
+    for (_, handle) in links {
+        let _ = handle.await;
+    }
+    shared.clear_party();
 }
 
 async fn client_loop(shared: SharedState, credential: PeerCredential) {
@@ -710,6 +746,18 @@ async fn send_client_presence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn disabled_party_supervisor_exits_when_application_quits() {
+        let shared = SharedState::new(AppConfig::default());
+        let (stop, receiver) = watch::channel(false);
+        let task = tokio::spawn(supervise_server(shared, receiver));
+        stop.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("party supervisor should stop promptly")
+            .unwrap();
+    }
     use crate::config::{AppConfig, CharacterProfile};
     #[test]
     fn invites_validate_secret_and_url() {

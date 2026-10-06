@@ -1,60 +1,62 @@
-//! Compact location presentation helpers shared by state serialization and UI.
+//! World asset lookup and display rules shared by local and party cards.
 
-/// Selects an original, bundled vector sigil from the exact world label resolved
-/// by the WizRust101-DB catalog. Every known label is listed so catalog growth
-/// is caught by the coverage test below.
+use serde::Deserialize;
+use std::sync::OnceLock;
+
+const WORLD_ASSETS: &str = include_str!("../static/world-assets.json");
+#[derive(Deserialize)]
+struct AssetCatalog {
+    fallback: String,
+    worlds: std::collections::HashMap<String, String>,
+}
+
+fn catalog() -> &'static AssetCatalog {
+    static CATALOG: OnceLock<AssetCatalog> = OnceLock::new();
+    CATALOG.get_or_init(|| serde_json::from_str(WORLD_ASSETS).expect("valid RPC world asset map"))
+}
+
+/// Returns the RPC-provided asset key, or its Wizard101 fallback key.
 pub fn world_icon(world: Option<&str>) -> &'static str {
-    match world {
-        Some("Wizard City") => "spiral",
-        Some("Krokotopia") => "spiral",
-        Some("Marleybone") => "spiral",
-        Some("Wysteria") => "spiral",
-        Some("Dragonspyre") => "flame",
-        Some("Aquila") => "flame",
-        Some("Darkmoor") => "flame",
-        Some("Castle Darkmoor") => "flame",
-        Some("Celestia") => "star",
-        Some("Polaris") => "star",
-        Some("Empyrea") => "star",
-        Some("Wallaru") => "star",
-        Some("Grizzleheim") => "leaf",
-        Some("Zafaria") => "leaf",
-        Some("Azteca") => "leaf",
-        Some("MooShu") => "moon",
-        Some("Avalon") => "moon",
-        Some("Arcanum") => "moon",
-        Some("Khrysalis") => "crown",
-        Some("Mirage") => "crown",
-        Some("Novus") => "crown",
-        Some("Lemuria") => "crown",
-        Some("Karamelle") => "crown",
-        Some("Kembaalung Village") => "mountain",
-        Some("Zigazag") => "mountain",
-        Some("PetDerby") => "mountain",
-        Some("Raids") => "mountain",
-        Some("Unknown") => "unknown",
-        Some(_) | None => "unknown",
+    let assets = catalog();
+    world
+        .filter(|name| !name.is_empty() && *name != "Unknown")
+        .and_then(|name| assets.worlds.get(name))
+        .map(String::as_str)
+        .unwrap_or(assets.fallback.as_str())
+}
+
+/// A database result of `Unknown` is not player-facing location information.
+pub fn visible_world(world: Option<&str>) -> Option<&str> {
+    world.filter(|name| {
+        !name.is_empty() && *name != "Unknown" && catalog().worlds.contains_key(*name)
+    })
+}
+
+pub fn visible_zone(zone: Option<&str>) -> Option<&str> {
+    zone.filter(|name| !name.is_empty() && *name != "Unknown")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocationDisplay<'a> {
+    pub icon: &'static str,
+    pub world: Option<&'a str>,
+    pub zone: Option<&'a str>,
+}
+
+pub fn primary_location<'a>(world: Option<&'a str>, zone: Option<&'a str>) -> LocationDisplay<'a> {
+    LocationDisplay {
+        icon: world_icon(world),
+        world: visible_world(world),
+        zone: visible_zone(zone),
     }
 }
 
-/// The primary wizard may show the resolved world name and current zone.
-pub fn primary_location(world: Option<&str>, zone: Option<&str>) -> String {
-    match (
-        world.filter(|value| !value.is_empty()),
-        zone.filter(|value| !value.is_empty()),
-    ) {
-        (Some(world), Some(zone)) => format!("{world} — {zone}"),
-        (Some(world), None) => format!("{world} — Location unknown"),
-        (None, Some(zone)) => format!("Unknown World — {zone}"),
-        (None, None) => "Unknown World — Location unknown".into(),
+pub fn party_location<'a>(world: Option<&'a str>, zone: Option<&'a str>) -> LocationDisplay<'a> {
+    LocationDisplay {
+        icon: world_icon(world),
+        world: None,
+        zone: visible_zone(zone),
     }
-}
-
-/// Party members keep their location compact: their resolved world is encoded
-/// in the sigil, while only the player-facing zone is written as text.
-pub fn party_location(zone: Option<&str>) -> &str {
-    zone.filter(|value| !value.is_empty())
-        .unwrap_or("Location unknown")
 }
 
 #[cfg(test)]
@@ -62,40 +64,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn primary_and_party_location_formatting_preserve_local_priority() {
-        assert_eq!(
-            primary_location(Some("Wizard City"), Some("The Commons")),
-            "Wizard City — The Commons"
-        );
-        assert_eq!(party_location(Some("The Commons")), "The Commons");
-        assert_eq!(party_location(None), "Location unknown");
+    fn primary_and_party_location_formatting_keep_local_world_name_only() {
+        let local = primary_location(Some("Wizard City"), Some("The Commons"));
+        assert_eq!(local.world, Some("Wizard City"));
+        assert_eq!(local.zone, Some("The Commons"));
+        assert_eq!(local.icon, "wizardcity");
+
+        let party = party_location(Some("Wizard City"), Some("The Commons"));
+        assert_eq!(party.world, None);
+        assert_eq!(party.zone, Some("The Commons"));
+        assert_eq!(party.icon, "wizardcity");
     }
 
     #[test]
-    fn world_sigil_uses_resolved_world_and_has_unknown_fallback() {
-        assert_eq!(world_icon(Some("Wizard City")), "spiral");
-        assert_eq!(world_icon(Some("Celestia")), "star");
-        assert_eq!(world_icon(Some("Unknown")), "unknown");
-        assert_eq!(world_icon(Some("unmapped future world")), "unknown");
-        assert_eq!(world_icon(None), "unknown");
+    fn unknown_or_unmapped_world_uses_rpc_fallback_without_unknown_text() {
+        for world in [None, Some("Unknown"), Some("Unmapped World")] {
+            let local = primary_location(world, None);
+            let party = party_location(world, None);
+            assert_eq!(local.icon, "wizard101");
+            assert_eq!(local.world, None);
+            assert_eq!(local.zone, None);
+            assert_eq!(party.icon, "wizard101");
+            assert_eq!(party.world, None);
+            assert_eq!(party.zone, None);
+        }
     }
 
     #[test]
-    fn every_world_in_the_bundled_db_has_world_art_or_explicit_unknown() {
-        let catalog = crate::mapping::runtime_catalog().unwrap();
-        let worlds = catalog
+    fn known_world_without_location_keeps_world_but_omits_zone() {
+        let local = primary_location(Some("Celestia"), Some("Unknown"));
+        let party = party_location(Some("Celestia"), Some("Unknown"));
+        assert_eq!(local.icon, "celestia");
+        assert_eq!(local.world, Some("Celestia"));
+        assert_eq!(local.zone, None);
+        assert_eq!(party.icon, "celestia");
+        assert_eq!(party.world, None);
+        assert_eq!(party.zone, None);
+    }
+
+    #[test]
+    fn db_world_without_rpc_art_uses_fallback_and_hides_its_world_label() {
+        let local = primary_location(Some("Kembaalung Village"), Some("Unknown"));
+        assert_eq!(local.icon, catalog().fallback);
+        assert_eq!(local.world, None);
+        assert_eq!(local.zone, None);
+    }
+
+    #[test]
+    fn rpc_asset_catalog_covers_db_worlds_and_served_files() {
+        let assets = catalog();
+        let db = crate::mapping::runtime_catalog().unwrap();
+        let worlds = db
             .zones
             .values()
             .filter_map(|zone| zone.world.as_deref())
             .collect::<std::collections::BTreeSet<_>>();
         assert!(worlds.len() >= 25, "expected complete DB world coverage");
         for world in worlds {
-            assert_ne!(
-                world_icon(Some(world)),
-                "unknown",
-                "missing art for {world}"
-            );
+            let key = world_icon(Some(world));
+            if let Some(mapped) = assets.worlds.get(world) {
+                assert_eq!(key, mapped);
+            } else {
+                assert_eq!(key, assets.fallback);
+            }
         }
-        assert_eq!(world_icon(Some("Unknown")), "unknown");
+        assert_eq!(world_icon(Some("Unknown")), "wizard101");
     }
 }

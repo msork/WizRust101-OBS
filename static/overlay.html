@@ -4,37 +4,28 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
-    <title>WizRust101 OBS</title>
+    <title>WizRust101-OBS</title>
   </head>
   <body>
     <main id="overlay">
-      <svg class="sigil-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <symbol id="world-spiral" viewBox="0 0 40 40"><path d="M20 4 35 13v14L20 36 5 27V13z M20 10a10 10 0 1 0 10 10M20 15a5 5 0 1 0 5 5"/></symbol>
-          <symbol id="world-flame" viewBox="0 0 40 40"><path d="M21 4c2 8-7 9-4 17 1-4 4-5 7-8 8 10 7 19-1 23-9 2-16-4-13-13 2-6 8-10 11-19z M19 25c-4 5-2 9 2 10 4-2 4-6 1-9"/></symbol>
-          <symbol id="world-star" viewBox="0 0 40 40"><path d="m20 3 4.5 11.5L37 16l-9.5 7.5L30 36l-10-7-10 7 2.5-12.5L3 16l12.5-1.5z M20 11v18M11 20h18"/></symbol>
-          <symbol id="world-leaf" viewBox="0 0 40 40"><path d="M34 6C17 5 7 12 7 24c0 8 9 12 15 7 7-5 8-15 12-25z M8 34c6-9 12-14 21-20M14 24l-1-8M22 18l7 1"/></symbol>
-          <symbol id="world-moon" viewBox="0 0 40 40"><path d="M28 5a16 16 0 1 0 7 25A16 16 0 0 1 28 5z M8 13h7l3 5h7l4 6M13 30l4-5"/></symbol>
-          <symbol id="world-crown" viewBox="0 0 40 40"><path d="m5 12 9 7 6-13 6 13 9-7-4 20H9z M10 26h20M9 35h22"/></symbol>
-          <symbol id="world-mountain" viewBox="0 0 40 40"><path d="m3 33 12-24 6 12 4-7 12 19z M15 9l4 8-5-2M25 14l3 8-4-2M7 28h7M27 29h7"/></symbol>
-          <symbol id="world-unknown" viewBox="0 0 40 40"><path d="M20 4 35 13v14L20 36 5 27V13z M15 15a5 5 0 1 1 8 4c-2 2-3 2-3 6M20 30v1"/></symbol>
-        </defs>
-      </svg>
       <section id="primary" class="primary" aria-label="Your wizard">
-        <span class="crest" aria-hidden="true">✧</span>
-        <span class="crest world-icon" aria-hidden="true"><svg><use id="primary-world-icon" href="#world-unknown"></use></svg></span>
+        <img id="primary-world-icon" class="world-icon primary-world-icon" alt="">
         <div class="primary-copy">
           <div class="eyebrow">YOUR WIZARD</div>
           <div id="identity" class="identity"></div>
-          <div id="location" class="legacy-location"></div>
-          <div class="location primary-location"><span id="world-name" class="world-name"></span><span id="zone-name" class="zone-name"></span></div>
-          <div id="session" class="session"></div>
+          <div class="location primary-location">
+            <span id="world-name" class="world-name"></span>
+            <span id="zone-name" class="zone-name"></span>
+          </div>
         </div>
       </section>
       <section id="party" class="party" aria-label="Other wizards in your party"></section>
       <section id="arrival" class="arrival" aria-live="polite">
-        <div id="arrival-world" class="arrival-world"></div>
-        <div id="arrival-zone" class="arrival-zone"></div>
+        <img id="arrival-icon" class="arrival-icon" alt="">
+        <div class="arrival-copy">
+          <div id="arrival-world" class="arrival-world"></div>
+          <div id="arrival-zone" class="arrival-zone"></div>
+        </div>
       </section>
       <aside id="party-notice" class="party-notice" aria-live="polite">
         <span class="notice-sigil" aria-hidden="true">✧</span>
@@ -43,21 +34,33 @@
     </main>
     <script>
       const $ = (id) => document.getElementById(id);
-      let current = { active: false, session_seconds: 0 };
-      let receivedAt = Date.now();
       let previousZone = null;
       let previousParty = null;
       let hideTimer;
       let noticeTimer;
 
-      function time(seconds) {
-        const value = Math.max(0, Math.floor(seconds));
-        return `${String(Math.floor(value / 3600)).padStart(2, '0')}:${String(Math.floor(value / 60) % 60).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
-      }
-
       function schoolClass(school) {
         const value = String(school).toLowerCase();
-        return ['fire', 'ice', 'storm', 'myth', 'life', 'death'].includes(value) ? value : 'balance';
+        return ['fire', 'ice', 'storm', 'myth', 'life', 'death', 'balance'].includes(value) ? value : 'balance';
+      }
+
+      function visible(value) {
+        return typeof value === 'string' && value.trim() && value !== 'Unknown' ? value : '';
+      }
+
+      function setWorldIcon(image, key) {
+        const safeKey = /^[a-z0-9]+$/.test(key || '') ? key : 'wizard101';
+        const source = `/worlds/${safeKey}`;
+        if (image.getAttribute('src') !== source) {
+          image.classList.add('changing');
+          image.onload = () => image.classList.remove('changing');
+          image.onerror = () => {
+            image.onerror = null;
+            image.classList.remove('changing');
+            image.src = '/worlds/wizard101';
+          };
+          image.src = source;
+        }
       }
 
       function announce(message) {
@@ -73,18 +76,19 @@
         const joined = [...after.keys()].filter((id) => !before.has(id));
         const left = [...before.keys()].filter((id) => !after.has(id));
         if (joined.length) {
-          announce(joined.length === 1 ? `${after.get(joined[0]).name} joined the company` : `${joined.length} wizards joined the company`);
+          announce(joined.length === 1 ? `${after.get(joined[0]).name} joined your party` : `${joined.length} wizards joined your party`);
           return;
         }
         if (left.length) {
-          announce(left.length === 1 ? `${before.get(left[0]).name} left the company` : `${left.length} wizards left the company`);
+          announce(left.length === 1 ? `${before.get(left[0]).name} left your party` : `${left.length} wizards left your party`);
           return;
         }
         for (const [id, member] of after) {
           const prior = before.get(id);
           if (prior && (prior.world !== member.world || prior.zone !== member.zone || prior.active !== member.active)) {
-            const place = member.zone || 'an unknown location';
-            announce(member.active && place ? `${member.name} arrived in ${place}` : `${member.name} left the Spiral`);
+            const zone = visible(member.zone);
+            if (member.active && zone) announce(`${member.name} arrived in ${zone}`);
+            else if (!member.active) announce(`${member.name} left the Spiral`);
             return;
           }
         }
@@ -103,32 +107,30 @@
           name.className = `party-name ${schoolClass(wizard.school)}`;
           name.textContent = wizard.name;
           const school = document.createElement('div');
-          school.className = 'party-school';
+          school.className = `party-school ${schoolClass(wizard.school)}`;
           school.textContent = wizard.school;
           const location = document.createElement('div');
           location.className = 'party-location';
-          location.textContent = wizard.active
-            ? [wizard.world, wizard.zone].filter(Boolean).join(' — ') || 'Location unknown'
-            : 'Location not currently observed';
-          location.textContent = wizard.zone || 'Location unknown';
-          const worldIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-          worldIcon.classList.add('world-icon', 'party-world-icon');
-          worldIcon.setAttribute('aria-hidden', 'true');
-          const iconUse = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-          iconUse.setAttribute('href', `#world-${wizard.world_icon || 'unknown'}`);
-          worldIcon.append(iconUse);
-          location.prepend(worldIcon);
+          const worldIcon = document.createElement('img');
+          worldIcon.className = 'world-icon party-world-icon';
+          worldIcon.alt = '';
+          setWorldIcon(worldIcon, wizard.world_icon);
+          location.append(worldIcon);
+          const zone = visible(wizard.zone);
+          if (zone) {
+            const text = document.createElement('span');
+            text.textContent = zone;
+            location.append(text);
+          }
           card.append(marker, name, school, location);
           party.append(card);
         }
       }
 
       function render(state) {
-        current = state;
-        receivedAt = Date.now();
         const options = state.overlay || {};
-        document.documentElement.style.setProperty('--x', `${options.x_percent ?? 4}%`);
-        document.documentElement.style.setProperty('--y', `${options.y_percent ?? 87}%`);
+        document.documentElement.style.setProperty('--x', `${options.x_percent ?? 2}%`);
+        document.documentElement.style.setProperty('--y', `${options.y_percent ?? 35}%`);
         document.documentElement.style.setProperty('--scale', options.scale ?? 1);
         document.documentElement.style.setProperty('--opacity', options.opacity ?? 0.92);
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
@@ -138,14 +140,17 @@
           $('identity').textContent = `${state.wizard.name} · ${state.wizard.school}`;
           $('identity').className = `identity ${schoolClass(state.wizard.school)}`;
         } else {
-          $('identity').textContent = 'Choose a wizard in Spellbook Settings';
+          $('identity').textContent = 'Choose a character in Settings';
           $('identity').className = 'identity';
         }
-        $('location').textContent = [state.world, state.zone].filter(Boolean).join(' — ');
-        $('world-name').textContent = state.world || 'Unknown World';
-        $('zone-name').textContent = state.zone || 'Location unknown';
-        $('primary-world-icon').setAttribute('href', `#world-${state.world_icon || 'unknown'}`);
-        $('session').textContent = state.active ? `SESSION  ${time(state.session_seconds)}` : '';
+
+        const world = visible(state.world);
+        const zone = visible(state.zone);
+        $('world-name').textContent = world;
+        $('world-name').classList.toggle('hidden', !world);
+        $('zone-name').textContent = zone;
+        $('zone-name').classList.toggle('hidden', !zone);
+        setWorldIcon($('primary-world-icon'), state.world_icon);
 
         const members = state.party || [];
         const nextParty = new Map(members.map((member) => [member.peer_id, member]));
@@ -154,8 +159,11 @@
         previousParty = nextParty;
 
         if (options.zone_transition !== false && state.active && state.raw_zone && previousZone !== null && state.raw_zone !== previousZone) {
-          $('arrival-world').textContent = state.world || '';
-          $('arrival-zone').textContent = state.zone || 'Location unknown';
+          $('arrival-world').textContent = world;
+          $('arrival-world').classList.toggle('hidden', !world);
+          $('arrival-zone').textContent = zone;
+          $('arrival-zone').classList.toggle('hidden', !zone);
+          setWorldIcon($('arrival-icon'), state.world_icon);
           $('arrival').classList.remove('show');
           void $('arrival').offsetWidth;
           $('arrival').classList.add('show');
@@ -165,9 +173,6 @@
         previousZone = state.raw_zone;
       }
 
-      setInterval(() => {
-        if (current.active) $('session').textContent = `SESSION  ${time(current.session_seconds + Math.floor((Date.now() - receivedAt) / 1000))}`;
-      }, 1000);
       fetch('/state').then((response) => response.json()).then(render).catch(() => {});
       const events = new EventSource('/events');
       events.addEventListener('state', (event) => render(JSON.parse(event.data)));

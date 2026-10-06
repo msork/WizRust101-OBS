@@ -9,6 +9,7 @@ pub const SCHOOLS: [&str; 7] = ["Fire", "Ice", "Storm", "Myth", "Life", "Death",
 #[serde(default)]
 pub struct AppConfig {
     pub schema_version: u32,
+    pub ui_theme: UiTheme,
     pub profiles: Vec<CharacterProfile>,
     pub active_profile: Option<String>,
     pub overlay: OverlayConfig,
@@ -20,6 +21,14 @@ pub struct AppConfig {
     pub peer_links: Vec<PeerCredential>,
     #[serde(flatten)]
     pub future: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UiTheme {
+    #[default]
+    Light,
+    Dark,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -59,6 +68,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: 1,
+            ui_theme: UiTheme::Light,
             profiles: vec![],
             active_profile: None,
             overlay: OverlayConfig::default(),
@@ -87,8 +97,8 @@ impl Default for OverlayConfig {
         Self {
             character_location: true,
             zone_transition: true,
-            x_percent: 4.0,
-            y_percent: 87.0,
+            x_percent: 2.0,
+            y_percent: 35.0,
             scale: 1.0,
             opacity: 0.92,
             transition_seconds: 4.0,
@@ -200,6 +210,17 @@ mod tests {
         let decoded: AppConfig = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, config);
         decoded.validate().unwrap();
+    }
+
+    #[test]
+    fn old_config_defaults_to_persistent_light_theme() {
+        let decoded: AppConfig = serde_json::from_str(r#"{"schema_version":1}"#).unwrap();
+        assert_eq!(decoded.ui_theme, UiTheme::Light);
+        let mut dark = decoded;
+        dark.ui_theme = UiTheme::Dark;
+        let encoded = serde_json::to_string(&dark).unwrap();
+        let restored: AppConfig = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(restored.ui_theme, UiTheme::Dark);
     }
     #[test]
     fn rejects_arbitrary_school_names() {
