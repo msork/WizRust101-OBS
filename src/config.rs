@@ -105,10 +105,10 @@ impl Default for OverlayConfig {
         Self {
             character_location: true,
             zone_transition: true,
-            x_percent: 0.0,
-            y_percent: 0.0,
+            x_percent: 0.6,
+            y_percent: 25.0,
             scale: 1.0,
-            opacity: 0.92,
+            opacity: 1.0,
             transition_seconds: 4.0,
         }
     }
@@ -134,8 +134,8 @@ impl AppConfig {
         {
             return Err("active_profile must identify a saved profile".into());
         }
-        if self.peer_links.len() > 8 {
-            return Err("at most eight paired peers are supported".into());
+        if self.peer_links.len() > 256 {
+            return Err("too many Party peer credentials are active in this app session".into());
         }
         if !(1024..=65535).contains(&self.peer_port) {
             return Err("party port must be between 1024 and 65535".into());
@@ -187,13 +187,11 @@ impl AppConfig {
             object.contains_key("peer_links") || object.contains_key("collaboration_server_enabled")
         });
         let mut config: Self = serde_json::from_value(legacy_value)?;
-        // The previous built-in placement was x=0.8%, y=1%. Migrate only that
-        // exact pair; any other saved position is an intentional user choice.
-        let has_legacy_overlay_position =
-            config.overlay.x_percent == 0.8 && config.overlay.y_percent == 1.0;
+        // Migrate only complete, untouched previous defaults. A user-edited
+        // field makes the saved overlay their own configuration, so preserve it.
+        let has_legacy_overlay_position = is_untouched_old_overlay_default(&config.overlay);
         if has_legacy_overlay_position {
-            config.overlay.x_percent = 0.0;
-            config.overlay.y_percent = 0.0;
+            config.overlay = OverlayConfig::default();
         }
         config.collaboration_server_enabled = false;
         config.peer_links.clear();
@@ -215,6 +213,18 @@ impl AppConfig {
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.save_to_path(&Self::path()?)
     }
+}
+
+fn is_untouched_old_overlay_default(overlay: &OverlayConfig) -> bool {
+    let old_default = |x_percent, y_percent| OverlayConfig {
+        x_percent,
+        y_percent,
+        opacity: 0.92,
+        ..OverlayConfig::default()
+    };
+    // Both the original inset default and the previously shipped zero-origin
+    // default are migrated. All other fields must still match untouched defaults.
+    overlay == &old_default(0.8, 1.0) || overlay == &old_default(0.0, 0.0)
 }
 
 #[cfg(test)]
@@ -252,8 +262,13 @@ mod tests {
     #[test]
     fn default_overlay_stack_is_top_anchored_over_the_shop_area() {
         let overlay = OverlayConfig::default();
-        assert_eq!(overlay.x_percent, 0.0);
-        assert_eq!(overlay.y_percent, 0.0);
+        assert_eq!(overlay.x_percent, 0.6);
+        assert_eq!(overlay.y_percent, 25.0);
+        assert_eq!(overlay.scale, 1.0);
+        assert_eq!(overlay.opacity, 1.0);
+        assert_eq!(overlay.transition_seconds, 4.0);
+        assert!(overlay.character_location);
+        assert!(overlay.zone_transition);
     }
 
     #[test]
@@ -263,14 +278,28 @@ mod tests {
         let mut legacy = AppConfig::default();
         legacy.overlay.x_percent = 0.8;
         legacy.overlay.y_percent = 1.0;
+        legacy.overlay.opacity = 0.92;
         fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
         let loaded = AppConfig::load_from_path(&path).unwrap();
-        assert_eq!(loaded.overlay.x_percent, 0.0);
-        assert_eq!(loaded.overlay.y_percent, 0.0);
+        assert_eq!(loaded.overlay, OverlayConfig::default());
         let saved: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(saved["overlay"]["x_percent"], 0.0);
-        assert_eq!(saved["overlay"]["y_percent"], 0.0);
+        assert_eq!(saved["overlay"]["x_percent"], 0.6);
+        assert_eq!(saved["overlay"]["y_percent"], 25.0);
+    }
+
+    #[test]
+    fn prior_zero_origin_default_migrates_to_requested_overlay_defaults() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut previous = AppConfig::default();
+        previous.overlay.x_percent = 0.0;
+        previous.overlay.y_percent = 0.0;
+        previous.overlay.opacity = 0.92;
+        fs::write(&path, serde_json::to_vec_pretty(&previous).unwrap()).unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.overlay, OverlayConfig::default());
     }
 
     #[test]
@@ -285,6 +314,22 @@ mod tests {
         let loaded = AppConfig::load_from_path(&path).unwrap();
         assert_eq!(loaded.overlay.x_percent, 12.5);
         assert_eq!(loaded.overlay.y_percent, 4.25);
+    }
+
+    #[test]
+    fn customized_overlay_settings_do_not_trigger_old_default_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut config = AppConfig::default();
+        config.overlay.x_percent = 0.0;
+        config.overlay.y_percent = 0.0;
+        config.overlay.opacity = 0.7;
+        fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.overlay.x_percent, 0.0);
+        assert_eq!(loaded.overlay.y_percent, 0.0);
+        assert_eq!(loaded.overlay.opacity, 0.7);
     }
     #[test]
     fn old_peer_credentials_do_not_gain_reconnect_permission() {

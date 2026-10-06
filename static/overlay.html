@@ -132,10 +132,10 @@
 
       function render(state) {
         const options = state.overlay || {};
-        document.documentElement.style.setProperty('--x', `${options.x_percent ?? 0}%`);
-        document.documentElement.style.setProperty('--y', `${options.y_percent ?? 0}%`);
+        document.documentElement.style.setProperty('--x', `${options.x_percent ?? 0.6}%`);
+        document.documentElement.style.setProperty('--y', `${options.y_percent ?? 25}%`);
         document.documentElement.style.setProperty('--scale', options.scale ?? 1);
-        document.documentElement.style.setProperty('--opacity', options.opacity ?? 0.92);
+        document.documentElement.style.setProperty('--opacity', options.opacity ?? 1);
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
         $('primary').classList.toggle('hidden', options.character_location === false);
 

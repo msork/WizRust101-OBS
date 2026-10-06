@@ -456,17 +456,39 @@ mod tests {
         assert!(!html.contains("textContent = wizard.school"));
         assert!(html.contains("id=\"primary-school\""));
         assert!(!html.contains("party-notice"));
-        assert!(html.contains("options.x_percent ?? 0"));
-        assert!(html.contains("options.y_percent ?? 0"));
+        assert!(html.contains("options.x_percent ?? 0.6"));
+        assert!(html.contains("options.y_percent ?? 25"));
         let css = include_str!("../static/style.css");
         assert!(css.contains("flex-direction: column;"));
-        assert!(css.contains(".party { display: flex; flex-direction: column;"));
-        assert!(css.contains("left: var(--x, 0%);"));
-        assert!(css.contains("top: var(--y, 0%);"));
+        assert!(css.contains(".party { display: flex; flex: 0 0 auto; flex-direction: column;"));
+        assert!(css.contains("left: var(--x, .6%);"));
+        assert!(css.contains("top: var(--y, 25%);"));
         assert!(css.contains("transform-origin: 0 0;"));
         assert!(css.contains("margin: 0; padding: 0; border: 0;"));
         assert!(!css.contains("#overlay { left: 2%;"));
         assert!(!css.contains("safe-area-inset"));
         assert!(!css.contains(".party-notice"));
+        let primary = html.find("id=\"primary\"").unwrap();
+        let party = html.find("id=\"party\"").unwrap();
+        assert!(
+            primary < party,
+            "the owner card must precede the growing party stack"
+        );
+        assert!(css.contains("#overlay {\n  position: absolute;"));
+        assert!(css.contains("flex: 0 0 auto;"));
+    }
+
+    #[test]
+    fn party_roster_growth_is_below_a_fixed_owner_card() {
+        let html = include_str!("../static/overlay.html");
+        let css = include_str!("../static/style.css");
+        let primary = html.find("id=\"primary\"").unwrap();
+        let party = html.find("id=\"party\"").unwrap();
+        assert!(primary < party);
+        assert!(html.contains("members.slice(0, 3)"));
+        assert!(css.contains("#overlay {\n  position: absolute;"));
+        assert!(css.contains("flex-direction: column;"));
+        assert!(css.contains(".primary {\n  position: relative;\n  flex: 0 0 auto;"));
+        assert!(css.contains(".party { display: flex; flex: 0 0 auto; flex-direction: column;"));
     }
 }

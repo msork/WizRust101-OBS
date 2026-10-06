@@ -1,6 +1,7 @@
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::{
+    collections::{HashMap, HashSet},
     io::Cursor,
     path::PathBuf,
     sync::{
@@ -387,10 +388,12 @@ struct SettingsApp {
     demo_world: String,
     demo_zone: String,
     draft: AppConfig,
+    app_icon: egui::TextureHandle,
+    school_icons: HashMap<String, egui::TextureHandle>,
     tab: Tab,
     status: String,
     last_autosave: Instant,
-    invite_text: String,
+    issued_invites: IssuedInvites,
     import_text: String,
     selected_profile: String,
     quit: Arc<Mutex<bool>>,
@@ -400,6 +403,52 @@ struct SettingsApp {
     last_native_hidden: Option<bool>,
     focus_after_restore: bool,
     _tray: TrayLifetime,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IssuedInvite {
+    peer_id: String,
+    code: String,
+    expires_at_unix: u64,
+}
+
+#[derive(Default)]
+struct IssuedInvites(Vec<IssuedInvite>);
+
+impl IssuedInvites {
+    fn add(&mut self, invite: IssuedInvite) -> Result<(), &'static str> {
+        if self.0.len() >= peer::MAX_GUESTS {
+            return Err(
+                "All three invites are in use. Remove a wizard or wait for an invite to expire.",
+            );
+        }
+        self.0.push(invite);
+        Ok(())
+    }
+
+    fn retain_unused(&mut self, connected: &HashSet<String>, now: u64) {
+        self.0
+            .retain(|invite| invite.expires_at_unix > now && !connected.contains(&invite.peer_id));
+    }
+}
+
+fn school_icon_bytes(school: &str) -> &'static [u8] {
+    match school.to_ascii_lowercase().as_str() {
+        "fire" => include_bytes!("../assets/schools/fire.png"),
+        "ice" => include_bytes!("../assets/schools/ice.png"),
+        "storm" => include_bytes!("../assets/schools/storm.png"),
+        "myth" => include_bytes!("../assets/schools/myth.png"),
+        "life" => include_bytes!("../assets/schools/life.png"),
+        "death" => include_bytes!("../assets/schools/death.png"),
+        "balance" => include_bytes!("../assets/schools/balance.png"),
+        _ => include_bytes!("../assets/schools/balance.png"),
+    }
+}
+
+fn load_icon_texture(ctx: &Context, name: &str, bytes: &[u8]) -> egui::TextureHandle {
+    let (rgba, width, height) = decode_icon(bytes).expect("bundled icon must be a valid PNG");
+    let image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+    ctx.load_texture(name, image, Default::default())
 }
 enum TrayLifetime {
     #[cfg(target_os = "linux")]
@@ -431,6 +480,24 @@ impl SettingsApp {
         native_hwnd: Option<isize>,
     ) -> Self {
         let draft = shared.config.lock().unwrap().clone();
+        let app_icon = load_icon_texture(
+            &ctx,
+            "wzr-app-header",
+            include_bytes!("../assets/icons/sizes/256.png"),
+        );
+        let school_icons = SCHOOLS
+            .iter()
+            .map(|school| {
+                (
+                    (*school).to_owned(),
+                    load_icon_texture(
+                        &ctx,
+                        &format!("school-roster-{}", school.to_ascii_lowercase()),
+                        school_icon_bytes(school),
+                    ),
+                )
+            })
+            .collect();
         let initial_state = shared.snapshot();
         let selected_profile = draft
             .active_profile
@@ -448,10 +515,12 @@ impl SettingsApp {
             demo_world: initial_state.world.unwrap_or_else(|| "Wizard City".into()),
             demo_zone: initial_state.zone.unwrap_or_else(|| "The Commons".into()),
             draft,
+            app_icon,
+            school_icons,
             tab: Tab::Overlay,
             status: "Ready • your settings stay on this device".into(),
             last_autosave: Instant::now(),
-            invite_text: String::new(),
+            issued_invites: IssuedInvites::default(),
             import_text: String::new(),
             selected_profile,
             quit,
@@ -530,7 +599,7 @@ impl SettingsApp {
             .iter_mut()
             .find(|p| p.id == self.selected_profile)
     }
-    fn create_invite(&mut self) {
+    fn create_invite(&mut self, ctx: &Context) {
         if !self.draft.collaboration_server_enabled {
             self.status = "Start hosting before creating an invite".into();
             return;
@@ -542,13 +611,21 @@ impl SettingsApp {
             .into_iter()
             .map(|member| member.peer_id)
             .collect();
-        self.draft.peer_links.retain(|peer| {
-            peer.expires_at_unix
-                .is_none_or(|expires| expires > peer::unix_now())
-                || connected.contains(&peer.peer_id)
-        });
-        if self.draft.peer_links.len() >= 8 {
-            self.status = "You have reached the limit of eight saved invites".into();
+        let now = peer::unix_now();
+        let expired: HashSet<_> = self
+            .draft
+            .peer_links
+            .iter()
+            .filter(|link| link.connect_url.is_none())
+            .filter(|link| link.expires_at_unix.is_some_and(|expires| expires <= now))
+            .map(|link| link.peer_id.clone())
+            .collect();
+        self.draft
+            .peer_links
+            .retain(|link| !expired.contains(&link.peer_id));
+        self.issued_invites.retain_unused(&connected, now);
+        if self.issued_invites.0.len() >= peer::MAX_GUESTS {
+            self.status = "All three invites are in use. A used invite cannot be reused.".into();
             return;
         }
         let Some(profile) = self
@@ -582,10 +659,26 @@ impl SettingsApp {
                 self.draft.advertised_host = host.clone();
                 match peer::invite_for(&credential, &host, self.draft.peer_port) {
                     Ok(invite) => {
-                        self.invite_text = peer::encode_invite(&invite).unwrap_or_default();
+                        let code = match peer::encode_invite(&invite) {
+                            Ok(code) => code,
+                            Err(error) => {
+                                self.status = error;
+                                return;
+                            }
+                        };
+                        if let Err(error) = self.issued_invites.add(IssuedInvite {
+                            peer_id: credential.peer_id.clone(),
+                            code: code.clone(),
+                            expires_at_unix: invite.expires_at_unix,
+                        }) {
+                            self.status = error.into();
+                            return;
+                        }
                         self.draft.peer_links.push(credential);
                         self.save();
-                        self.status = "Party invite ready to copy".into();
+                        ctx.copy_text(code);
+                        self.status =
+                            "New party invite copied. You can copy it again below.".into();
                     }
                     Err(error) => self.status = format!("Could not prepare an invite: {error}"),
                 }
@@ -620,22 +713,23 @@ impl SettingsApp {
             Err(e) => self.status = e,
         }
     }
-    fn host_party(&mut self) {
+    fn host_party(&mut self, ctx: &Context) {
         if self.draft.active_profile.is_none() {
             self.status = "Choose a primary wizard before hosting a party".into();
             return;
         }
         self.draft.peer_links.clear();
+        self.issued_invites.0.clear();
         self.shared.clear_party();
         self.shared.set_party_status(None);
         self.draft.collaboration_server_enabled = true;
-        self.create_invite();
+        self.create_invite(ctx);
     }
     fn leave_party(&mut self) {
         self.draft.collaboration_server_enabled = false;
         self.draft.upnp_port_forward = false;
         self.draft.peer_links.clear();
-        self.invite_text.clear();
+        self.issued_invites.0.clear();
         self.shared.clear_party();
         self.shared.set_party_status(None);
         self.save();
@@ -643,8 +737,9 @@ impl SettingsApp {
     }
     fn top(&mut self, ui: &mut egui::Ui) {
         let colors = palette(self.draft.ui_theme);
+        let app_icon = self.app_icon.id();
         ui.horizontal(|ui| {
-            sigil(ui);
+            ui.image((app_icon, egui::vec2(48.0, 48.0)));
             ui.vertical(|ui| {
                 ui.label(
                     RichText::new("WIZRUST101 • OBS SPELLBOOK")
@@ -905,7 +1000,7 @@ impl SettingsApp {
                                     .is_some_and(|expires| expires <= peer::unix_now())
                         });
                         let (title, detail) = if hosting {
-                            ("Hosting Party", "Your invite is ready to share")
+                            ("Hosting Party", "Create up to three single-use invites")
                         } else if joining && members.is_empty() && invite_expired {
                             ("Invite Expired", "Paste a fresh party invite to reconnect")
                         } else if joining && members.is_empty() {
@@ -921,27 +1016,59 @@ impl SettingsApp {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if hosting {
                             if brass_button(ui, "Create Invite").clicked() {
-                                self.create_invite();
+                                self.create_invite(ui.ctx());
                             }
                         } else if !joining && brass_button(ui, "Host Party").clicked() {
-                            self.host_party();
+                            self.host_party(ui.ctx());
                         }
                         if (hosting || joining) && ui.button("Leave Party").clicked() {
                             self.leave_party();
                         }
                     });
                 });
-                if hosting && !self.invite_text.is_empty() {
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Invite ready - valid for 24 hours").small());
-                        if brass_button(ui, "Copy Invite").clicked() {
-                            ui.ctx().copy_text(self.invite_text.clone());
-                            self.status = "Party invite copied".into();
-                        }
-                    });
-                }
             });
+
+        let connected_ids = members
+            .iter()
+            .map(|member| member.peer_id.clone())
+            .collect();
+        self.issued_invites
+            .retain_unused(&connected_ids, peer::unix_now());
+        if hosting {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("UNUSED INVITES")
+                        .strong()
+                        .color(colors.accent),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "{}/{}",
+                        self.issued_invites.0.len(),
+                        peer::MAX_GUESTS
+                    ))
+                    .small()
+                    .color(colors.subtitle),
+                );
+            });
+            if self.issued_invites.0.is_empty() {
+                ui.label(
+                    RichText::new("No unused invites. Create one to copy it to the clipboard.")
+                        .small()
+                        .color(colors.subtitle),
+                );
+            }
+            for invite in self.issued_invites.0.clone() {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(format!("Unused invite · {}", invite.peer_id)).small());
+                    if brass_button(ui, "Copy").clicked() {
+                        ui.ctx().copy_text(invite.code.clone());
+                        self.status = "Party invite copied".into();
+                    }
+                });
+            }
+        }
 
         ui.add_space(12.0);
         ui.label(RichText::new("JOIN A PARTY").strong().color(colors.accent));
@@ -978,25 +1105,24 @@ impl SettingsApp {
         } else {
             for member in &members {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("•").color(if member.active {
-                        Color32::from_rgb(94, 135, 79)
+                    if let Some(icon) = self.school_icons.get(&member.school) {
+                        ui.image((icon.id(), egui::vec2(22.0, 22.0)));
+                    }
+                    let indicator_color = if member.active {
+                        Color32::from_rgb(93, 153, 73)
                     } else {
-                        GOLD
-                    }));
-                    ui.label(
-                        RichText::new("●")
-                            .color(crate::school_palette::primary_color(&member.school)),
-                    );
-                    let secondary = crate::school_palette::colors(&member.school)
-                        .map(|colors| parse_school_color(&colors.secondary))
-                        .unwrap_or(Color32::GRAY);
-                    ui.label(RichText::new("●").color(secondary));
+                        colors.subtitle
+                    };
+                    let (indicator, _) =
+                        ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                    ui.painter()
+                        .circle_filled(indicator.center(), 4.0, indicator_color);
                     ui.label(
                         RichText::new(&member.name)
                             .strong()
                             .color(palette(self.draft.ui_theme).ink),
                     );
-                    ui.label(RichText::new(format!("- {}", member.school)).small());
+                    ui.label(RichText::new(&member.school).small());
                     let status = if member.active {
                         format!(
                             "In game: {}",
@@ -1013,33 +1139,6 @@ impl SettingsApp {
                 });
             }
         }
-        if hosting {
-            for invite in self
-                .draft
-                .peer_links
-                .iter()
-                .filter(|p| p.connect_url.is_none())
-            {
-                if !members
-                    .iter()
-                    .any(|member| member.peer_id == invite.peer_id)
-                {
-                    let expired = invite
-                        .expires_at_unix
-                        .is_some_and(|t| t <= crate::peer::unix_now());
-                    ui.label(
-                        RichText::new(if expired {
-                            "Invite expired"
-                        } else {
-                            "Invite sent - waiting to join"
-                        })
-                        .small()
-                        .color(colors.subtitle),
-                    );
-                }
-            }
-        }
-
         ui.add_space(10.0);
         setting_toggle(
             ui,
@@ -1276,26 +1375,6 @@ fn brass_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
             .corner_radius(egui::CornerRadius::same(8)),
     )
 }
-fn sigil(ui: &mut egui::Ui) {
-    let (r, _) = ui.allocate_exact_size(egui::vec2(48.0, 48.0), egui::Sense::hover());
-    let p = ui.painter();
-    p.circle_filled(r.center(), 22.0, Color32::from_rgb(67, 48, 51));
-    p.circle_stroke(r.center(), 20.0, Stroke::new(1.5_f32, GOLD));
-    p.line_segment(
-        [
-            r.center() + egui::vec2(0.0, -13.0),
-            r.center() + egui::vec2(0.0, 13.0),
-        ],
-        Stroke::new(2.0_f32, Color32::from_rgb(237, 204, 127)),
-    );
-    p.line_segment(
-        [
-            r.center() + egui::vec2(-11.0, 7.0),
-            r.center() + egui::vec2(11.0, -7.0),
-        ],
-        Stroke::new(2.0_f32, Color32::from_rgb(237, 204, 127)),
-    );
-}
 fn parse_school_color(value: &str) -> Color32 {
     let rgb = u32::from_str_radix(value.trim_start_matches('#'), 16).unwrap_or(0x4f4951);
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
@@ -1498,7 +1577,7 @@ fn install_tray(
 #[cfg(test)]
 mod icon_tests {
     use super::{
-        activate_selected_profile, decode_icon, focus_settings_viewport, install_theme,
+        HashSet, activate_selected_profile, decode_icon, focus_settings_viewport, install_theme,
         restore_settings_viewport, signal_quit, window_title,
     };
     use crate::config::{AppConfig, CharacterProfile, UiTheme};
@@ -1639,5 +1718,71 @@ mod icon_tests {
         assert_eq!(super::party_occupancy(0), 1);
         assert_eq!(super::party_occupancy(2), 3);
         assert_eq!(super::party_occupancy(3), 4);
+    }
+
+    #[test]
+    fn party_invites_are_capped_and_used_codes_stay_removed_after_leave() {
+        let mut invites = super::IssuedInvites::default();
+        for index in 0..crate::peer::MAX_GUESTS {
+            invites
+                .add(super::IssuedInvite {
+                    peer_id: format!("guest-{index}"),
+                    code: format!("code-{index}"),
+                    expires_at_unix: 200,
+                })
+                .unwrap();
+        }
+        assert_eq!(invites.0.len(), 3);
+        assert!(
+            invites
+                .add(super::IssuedInvite {
+                    peer_id: "fourth".into(),
+                    code: "code-fourth".into(),
+                    expires_at_unix: 200,
+                })
+                .is_err()
+        );
+
+        invites.retain_unused(&["guest-1".to_owned()].into(), 100);
+        assert_eq!(invites.0.len(), 2);
+        invites.retain_unused(&HashSet::new(), 100);
+        assert_eq!(
+            invites.0.len(),
+            2,
+            "a used invite must not reappear after leave"
+        );
+        invites.retain_unused(&HashSet::new(), 200);
+        assert!(invites.0.is_empty(), "expired invites are no longer active");
+    }
+
+    #[test]
+    fn party_roster_rows_use_school_icon_and_status_dot_instead_of_glyph_marks() {
+        let source = include_str!("ui.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let roster = production.split("PARTY ROSTER").nth(1).unwrap();
+        assert!(roster.contains("school_icons.get(&member.school)"));
+        assert!(roster.contains("circle_filled(indicator.center(), 4.0"));
+        assert!(!roster.contains("RichText::new(\"•\")"));
+        assert!(!roster.contains("RichText::new(\"●\")"));
+    }
+
+    #[test]
+    fn app_header_uses_the_executable_icon_asset() {
+        let source = include_str!("ui.rs");
+        assert!(source.contains("include_bytes!(\"../assets/icons/sizes/256.png\")"));
+        assert!(source.contains("ui.image((app_icon, egui::vec2(48.0, 48.0)))"));
+    }
+
+    #[test]
+    fn roster_school_icons_use_the_bundled_school_assets() {
+        for school in crate::config::SCHOOLS {
+            let (rgba, width, height) =
+                super::decode_icon(super::school_icon_bytes(school)).unwrap();
+            assert!(width > 0 && height > 0 && !rgba.is_empty(), "{school}");
+        }
+        let (rgba, width, height) =
+            super::decode_icon(include_bytes!("../assets/icons/sizes/256.png")).unwrap();
+        assert_eq!((width, height), (256, 256));
+        assert!(!rgba.is_empty());
     }
 }

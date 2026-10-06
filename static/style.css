@@ -3,8 +3,8 @@ html, body { width: 100%; height: 100%; margin: 0; padding: 0; border: 0; backgr
 body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 #overlay {
   position: absolute;
-  left: var(--x, 0%);
-  top: var(--y, 0%);
+  left: var(--x, .6%);
+  top: var(--y, 25%);
   right: auto;
   bottom: auto;
   margin: 0;
@@ -14,13 +14,14 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   flex-direction: column;
   align-items: flex-start;
   gap: 7px;
-  opacity: var(--opacity, .92);
+  opacity: var(--opacity, 1);
   transform: scale(var(--scale, 1));
   transform-origin: 0 0;
 }
 .hidden { display: none !important; }
 .primary {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: clamp(10px, .65vw, 16px);
@@ -46,7 +47,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .world-name { overflow: hidden; color: #e6cd91; font-size: clamp(12px, .72vw, 16px); line-height: 1.15; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .zone-name { overflow: hidden; color: #f1e3bf; font-size: clamp(15px, .92vw, 20px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .primary::before { content: ""; position: absolute; inset: 4px 8px; border: 1px solid rgba(223,190,117,.36); pointer-events: none; }
-.party { display: flex; flex-direction: column; gap: 5px; width: clamp(260px, 16vw, 360px); max-height: 270px; overflow: hidden; }
+.party { display: flex; flex: 0 0 auto; flex-direction: column; gap: 5px; width: clamp(260px, 16vw, 360px); max-height: 270px; overflow: hidden; }
 .party:empty { display: none; }
 .party-card {
   display: grid;
