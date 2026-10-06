@@ -503,6 +503,7 @@ mod tests {
     #[test]
     fn owner_coordinates_are_identical_for_zero_through_three_party_members() {
         let css = include_str!("../static/style.css");
+        let html = include_str!("../static/overlay.html");
         let owner_rule = css
             .split(".primary {")
             .nth(1)
@@ -514,9 +515,12 @@ mod tests {
         assert!(owner_rule.contains("left: var(--x, .6%);"));
         assert!(owner_rule.contains("top: var(--y, 27%);"));
         assert!(css.contains("--primary-scaled-height"));
+        assert!(html.contains("primary.style.position = 'fixed'"));
+        assert!(html.contains("primary.style.left = `${x}%`"));
+        assert!(html.contains("primary.style.top = `${y}%`"));
         assert!(
-            include_str!("../tests/browser/overlay-anchor.html")
-                .contains("getComputedStyle(owner)")
+            include_str!("../tests/browser/live-overlay-runner.html")
+                .contains("owner.x !== previous.owner.x")
         );
 
         let viewport = (1920.0_f32, 1080.0_f32);

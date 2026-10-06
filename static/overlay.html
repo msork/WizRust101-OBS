@@ -36,6 +36,40 @@
       let previousZone = null;
       let hideTimer;
       const partyCards = new Map();
+      const layoutDebug = new URLSearchParams(window.location.search).get('debug-layout') === '1';
+      if (layoutDebug) window.__overlayLayoutTrace = [];
+
+      function traceOverlayLayout(phase, state) {
+        if (!layoutDebug) return;
+        const owner = $('primary');
+        const party = $('party');
+        const ownerRect = owner.getBoundingClientRect();
+        const partyRect = party.getBoundingClientRect();
+        const style = getComputedStyle(owner);
+        const trace = {
+          phase,
+          revision: state.revision,
+          rosterSize: (state.party || []).length,
+          owner: { x: ownerRect.x, y: ownerRect.y, top: style.top, left: style.left, transform: style.transform, inlineTop: owner.style.top, inlineLeft: owner.style.left, inlinePosition: owner.style.position },
+          party: { x: partyRect.x, y: partyRect.y, top: getComputedStyle(party).top, height: partyRect.height },
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+          configured: { xPercent: state.overlay.x_percent, yPercent: state.overlay.y_percent },
+          measuredOwnerHeight: ownerRect.height,
+          scale: state.overlay.scale,
+          cssVariables: {
+            x: document.documentElement.style.getPropertyValue('--x'),
+            y: document.documentElement.style.getPropertyValue('--y'),
+            scale: document.documentElement.style.getPropertyValue('--scale'),
+            ownerHeight: document.documentElement.style.getPropertyValue('--primary-scaled-height'),
+          },
+        };
+        window.__overlayLayoutTrace.push(trace);
+        console.log('[overlay-layout]', JSON.stringify(trace));
+        if (phase === 'after-roster') {
+          window.__overlayLastRenderedRevision = state.revision;
+          window.dispatchEvent(new CustomEvent('overlay-state-rendered', { detail: trace }));
+        }
+      }
 
       function schoolClass(school) {
         const value = String(school).toLowerCase();
@@ -135,12 +169,22 @@
 
       function render(state) {
         const options = state.overlay || {};
-        document.documentElement.style.setProperty('--x', `${options.x_percent ?? 0.6}%`);
-        document.documentElement.style.setProperty('--y', `${options.y_percent ?? 27}%`);
-        document.documentElement.style.setProperty('--scale', options.scale ?? 1);
-        document.documentElement.style.setProperty('--opacity', options.opacity ?? 1);
+        const x = options.x_percent ?? 0.6;
+        const y = options.y_percent ?? 27;
+        const scale = options.scale ?? 1;
+        const opacity = options.opacity ?? 1;
+        document.documentElement.style.setProperty('--x', `${x}%`);
+        document.documentElement.style.setProperty('--y', `${y}%`);
+        document.documentElement.style.setProperty('--scale', scale);
+        document.documentElement.style.setProperty('--opacity', opacity);
+        const primary = $('primary');
+        primary.style.position = 'fixed';
+        primary.style.left = `${x}%`;
+        primary.style.top = `${y}%`;
+        primary.style.transform = `scale(${scale})`;
+        primary.style.opacity = opacity;
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
-        $('primary').classList.toggle('hidden', options.character_location === false);
+        primary.classList.toggle('hidden', options.character_location === false);
 
         if (state.wizard) {
           $('primary-name').textContent = state.wizard.name;
@@ -164,7 +208,9 @@
         setWorldIcon($('primary-world-icon'), state.world_icon);
         updatePartyAnchor();
 
+        traceOverlayLayout('before-roster', state);
         renderParty(state.party || []);
+        traceOverlayLayout('after-roster', state);
 
         if (options.zone_transition !== false && state.active && state.raw_zone && previousZone !== null && state.raw_zone !== previousZone) {
           $('arrival-world').textContent = world;
@@ -185,6 +231,7 @@
         .then(([palette, state]) => { schoolPalette = palette; render(state); })
         .catch(() => {});
       const events = new EventSource('/events');
+      if (layoutDebug) window.__overlayEvents = events;
       new ResizeObserver(updatePartyAnchor).observe($('primary'));
       events.addEventListener('state', (event) => {
         const state = JSON.parse(event.data);

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Live overlay SSE anchor regression</title></head>
+<body>
+  <iframe id="overlay" src="/overlay?debug-layout=1" width="1920" height="1080"></iframe>
+  <pre id="test-result" data-result="running">Waiting for the live overlay...</pre>
+  <script>
+    (() => {
+      const frame = document.getElementById('overlay');
+      const output = document.getElementById('test-result');
+      const fail = (error) => {
+        output.dataset.result = 'fail';
+        output.textContent = `FAIL: ${error.message || error}`;
+        frame.contentWindow?.__overlayEvents?.close();
+        frame.remove();
+      };
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const waitFor = async (predicate, message) => {
+        const deadline = performance.now() + 10000;
+        while (performance.now() < deadline) {
+          if (predicate()) return;
+          await delay(25);
+        }
+        throw new Error(message);
+      };
+
+      frame.addEventListener('load', async () => {
+        const watchdog = setTimeout(() => fail(`timed out; trace=${JSON.stringify(frame.contentWindow?.__overlayLayoutTrace || [])}`), 12000);
+        try {
+          await waitFor(() => frame.contentWindow.__overlayLayoutTrace?.some((entry) => entry.phase === 'after-roster'), 'overlay did not render its initial SSE state');
+          const target = frame.contentWindow;
+          const captures = [];
+          let previous = null;
+          let previousPartyTop = null;
+          let previousPartyHeight = null;
+
+          for (const rosterSize of [0, 1, 2, 3, 0]) {
+            const oldRevision = target.__overlayLastRenderedRevision;
+            const response = await fetch(`/__test/party/${rosterSize}`, { method: 'POST' });
+            if (!response.ok) throw new Error(`fixture rejected roster size ${rosterSize}`);
+            const changed = await response.json();
+            await waitFor(() => target.__overlayLastRenderedRevision >= changed.revision, `SSE update ${changed.revision} was not rendered`);
+            const entries = target.__overlayLayoutTrace.filter((entry) => entry.revision === changed.revision);
+            const before = entries.find((entry) => entry.phase === 'before-roster');
+            const after = entries.find((entry) => entry.phase === 'after-roster');
+            if (!before || !after) throw new Error(`missing before/after geometry for roster ${rosterSize}`);
+            if (changed.revision <= oldRevision) throw new Error('fixture state did not advance');
+            if (after.rosterSize !== rosterSize) throw new Error(`expected ${rosterSize} guests, rendered ${after.rosterSize}`);
+            if (previous && (after.owner.x !== previous.owner.x || after.owner.y !== previous.owner.y)) {
+              throw new Error(`owner moved at ${rosterSize + 1}/4: ${JSON.stringify({ before: previous.owner, after: after.owner })}`);
+            }
+            if (rosterSize > 0 && after.party.y < after.owner.y + after.measuredOwnerHeight) {
+              throw new Error(`party layer moved above the owner at ${rosterSize + 1}/4`);
+            }
+            if (rosterSize > 0) {
+              if (Math.abs(after.party.x - after.owner.x) > 0.1) throw new Error(`party x diverged from owner at ${rosterSize + 1}/4`);
+              if (previousPartyTop !== null && Math.abs(after.party.y - previousPartyTop) > 0.1) throw new Error(`party layer top shifted at ${rosterSize + 1}/4`);
+              if (previousPartyHeight !== null && rosterSize > (previous?.rosterSize || 0) && after.party.height <= previousPartyHeight) {
+                throw new Error(`party roster did not grow downward at ${rosterSize + 1}/4`);
+              }
+              previousPartyTop = after.party.y;
+              previousPartyHeight = after.party.height;
+            } else {
+              previousPartyTop = null;
+              previousPartyHeight = null;
+            }
+            const geometry = (entry) => ({
+              owner: { x: entry.owner.x, y: entry.owner.y, top: entry.owner.top, left: entry.owner.left, transform: entry.owner.transform, inlineTop: entry.owner.inlineTop, inlineLeft: entry.owner.inlineLeft },
+              party: { x: entry.party.x, y: entry.party.y, height: entry.party.height },
+              viewport: entry.viewport,
+              configured: entry.configured,
+              measuredOwnerHeight: entry.measuredOwnerHeight,
+              scale: entry.scale,
+            });
+            captures.push({ occupancy: `${rosterSize + 1}/4`, before: geometry(before), after: geometry(after) });
+            previous = { ...after, rosterSize };
+          }
+
+          output.dataset.result = 'pass';
+          output.textContent = JSON.stringify({ result: 'PASS', captures }, null, 2);
+          clearTimeout(watchdog);
+          target.__overlayEvents.close();
+          frame.remove();
+        } catch (error) {
+          fail(error);
+        }
+      }, { once: true });
+    })();
+  </script>
+</body>
+</html>
