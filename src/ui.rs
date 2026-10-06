@@ -463,6 +463,10 @@ fn can_create_invite(unused_invites: usize, capacity: usize) -> bool {
     capacity > 0 && unused_invites < capacity
 }
 
+fn show_join_party_section(hosting: bool, joining: bool, remote_members: usize) -> bool {
+    !hosting && (!joining || remote_members == 0)
+}
+
 fn school_icon_bytes(school: &str) -> &'static [u8] {
     match school.to_ascii_lowercase().as_str() {
         "fire" => include_bytes!("../assets/schools/fire.png"),
@@ -1104,18 +1108,20 @@ impl SettingsApp {
             }
         }
 
-        ui.add_space(12.0);
-        ui.label(RichText::new("JOIN A PARTY").strong().color(colors.accent));
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.import_text)
-                    .hint_text("Paste a party invite here")
-                    .desired_width(580.0),
-            );
-            if brass_button(ui, "Join Party").clicked() {
-                self.import_invite();
-            }
-        });
+        if show_join_party_section(hosting, joining, members.len()) {
+            ui.add_space(12.0);
+            ui.label(RichText::new("JOIN A PARTY").strong().color(colors.accent));
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.import_text)
+                        .hint_text("Paste a party invite here")
+                        .desired_width(580.0),
+                );
+                if brass_button(ui, "Join Party").clicked() {
+                    self.import_invite();
+                }
+            });
+        }
 
         if let Some(message) = self.shared.party_status() {
             ui.label(RichText::new(message).strong().color(colors.accent));
@@ -1810,6 +1816,17 @@ mod icon_tests {
         assert!(
             !super::can_create_invite(0, 0),
             "the full-party button is disabled"
+        );
+    }
+
+    #[test]
+    fn party_host_join_sections_are_mutually_exclusive() {
+        assert!(!super::show_join_party_section(true, false, 0));
+        assert!(!super::show_join_party_section(false, true, 1));
+        assert!(super::show_join_party_section(false, false, 0));
+        assert!(
+            super::show_join_party_section(false, true, 0),
+            "a rejected or pending join remains available for explicit retry"
         );
     }
 

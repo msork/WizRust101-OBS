@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="../../static/style.css">
+    <title>Overlay anchor regression</title>
+  </head>
+  <body>
+    <section id="primary" class="primary" aria-label="Your wizard">
+      <div class="primary-copy">
+        <div class="eyebrow">YOUR WIZARD</div>
+        <div class="identity"><span>Test Wizard</span></div>
+        <div class="primary-location"><span>Wizard City</span><span>The Commons</span></div>
+      </div>
+    </section>
+    <section id="party" class="party" aria-label="Other wizards in your party"></section>
+    <pre id="test-result">RUNNING</pre>
+    <script>
+      (() => {
+        const root = document.documentElement;
+        const owner = document.getElementById('primary');
+        const party = document.getElementById('party');
+        const result = document.getElementById('test-result');
+        root.style.setProperty('--x', '0.6%');
+        root.style.setProperty('--y', '27%');
+        root.style.setProperty('--scale', '1');
+        root.style.setProperty('--opacity', '1');
+
+        function updatePartyAnchor() {
+          root.style.setProperty('--primary-scaled-height', `${owner.getBoundingClientRect().height}px`);
+        }
+        function assert(condition, message) {
+          if (!condition) throw new Error(message);
+        }
+
+        try {
+          assert(owner.parentElement === document.body, 'owner must not be inside a party wrapper');
+          assert(party.parentElement === document.body, 'party must be an independent body layer');
+          assert(getComputedStyle(owner).position === 'fixed', 'owner must be fixed to the viewport');
+          updatePartyAnchor();
+          const startStyle = getComputedStyle(owner);
+          const startRect = owner.getBoundingClientRect();
+          const initial = { left: startStyle.left, top: startStyle.top, x: startRect.left, y: startRect.top };
+          const expectedX = window.innerWidth * 0.006;
+          const expectedY = window.innerHeight * 0.27;
+          assert(Math.abs(initial.x - expectedX) < 0.1, `owner x ${initial.x} != ${expectedX}`);
+          assert(Math.abs(initial.y - expectedY) < 0.1, `owner y ${initial.y} != ${expectedY}`);
+
+          const coordinates = [initial];
+          for (let count = 1; count <= 3; count += 1) {
+            const card = document.createElement('article');
+            card.className = 'party-card';
+            card.textContent = `Party wizard ${count}`;
+            party.append(card);
+            updatePartyAnchor();
+            const style = getComputedStyle(owner);
+            const rect = owner.getBoundingClientRect();
+            assert(style.left === initial.left, `owner left changed with ${count} party members`);
+            assert(style.top === initial.top, `owner top changed with ${count} party members`);
+            assert(rect.left === startRect.left, `owner pixel x changed with ${count} party members`);
+            assert(rect.top === startRect.top, `owner pixel y changed with ${count} party members`);
+
+            const partyRect = party.getBoundingClientRect();
+            assert(Math.abs(partyRect.left - rect.left) < 0.1, 'party layer must share owner left edge');
+            assert(partyRect.top >= rect.bottom + 6.9, 'party layer must start below the owner');
+            coordinates.push({ left: style.left, top: style.top, x: rect.left, y: rect.top });
+          }
+          result.dataset.result = 'pass';
+          result.textContent = JSON.stringify({ result: 'PASS', viewport: [innerWidth, innerHeight], coordinates });
+        } catch (error) {
+          result.dataset.result = 'fail';
+          result.textContent = `FAIL: ${error.message}`;
+        }
+      })();
+    </script>
+  </body>
+</html>

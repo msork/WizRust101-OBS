@@ -7,31 +7,29 @@
     <title>WizRust101-OBS</title>
   </head>
   <body>
-    <main id="overlay">
-      <section id="primary" class="primary" aria-label="Your wizard">
-        <img id="primary-world-icon" class="world-icon primary-world-icon" alt="">
-        <div class="primary-copy">
-          <div class="eyebrow">YOUR WIZARD</div>
-          <div id="identity" class="identity">
-            <img id="primary-school-icon" class="school-icon" alt="">
-            <span id="primary-name" class="primary-name"></span>
-            <span id="primary-school" class="primary-school"></span>
-          </div>
-          <div class="location primary-location">
-            <span id="world-name" class="world-name"></span>
-            <span id="zone-name" class="zone-name"></span>
-          </div>
+    <section id="primary" class="primary" aria-label="Your wizard">
+      <img id="primary-world-icon" class="world-icon primary-world-icon" alt="">
+      <div class="primary-copy">
+        <div class="eyebrow">YOUR WIZARD</div>
+        <div id="identity" class="identity">
+          <img id="primary-school-icon" class="school-icon" alt="">
+          <span id="primary-name" class="primary-name"></span>
+          <span id="primary-school" class="primary-school"></span>
         </div>
-      </section>
-      <section id="party" class="party" aria-label="Other wizards in your party"></section>
-      <section id="arrival" class="arrival" aria-live="polite">
-        <img id="arrival-icon" class="arrival-icon" alt="">
-        <div class="arrival-copy">
-          <div id="arrival-world" class="arrival-world"></div>
-          <div id="arrival-zone" class="arrival-zone"></div>
+        <div class="location primary-location">
+          <span id="world-name" class="world-name"></span>
+          <span id="zone-name" class="zone-name"></span>
         </div>
-      </section>
-    </main>
+      </div>
+    </section>
+    <section id="party" class="party" aria-label="Other wizards in your party"></section>
+    <section id="arrival" class="arrival" aria-live="polite">
+      <img id="arrival-icon" class="arrival-icon" alt="">
+      <div class="arrival-copy">
+        <div id="arrival-world" class="arrival-world"></div>
+        <div id="arrival-zone" class="arrival-zone"></div>
+      </div>
+    </section>
     <script>
       const $ = (id) => document.getElementById(id);
       let schoolPalette = {};

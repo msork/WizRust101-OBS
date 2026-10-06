@@ -460,7 +460,7 @@ mod tests {
         assert!(html.contains("options.y_percent ?? 27"));
         let css = include_str!("../static/style.css");
         assert!(css.contains("flex-direction: column;"));
-        assert!(css.contains(".party { position: absolute; left: var(--x, .6%); top: calc("));
+        assert!(css.contains(".party { position: fixed; left: var(--x, .6%); top: calc("));
         assert!(css.contains("left: var(--x, .6%);"));
         assert!(css.contains("top: var(--y, 27%);"));
         assert!(css.contains("transform-origin: 0 0;"));
@@ -474,11 +474,11 @@ mod tests {
             primary < party,
             "the owner card must precede the growing party stack"
         );
-        assert!(css.contains("#overlay {\n  position: fixed;\n  inset: 0;"));
         assert!(css.contains(
-            ".primary {\n  position: absolute;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
+            ".primary {\n  position: fixed;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
         ));
-        assert!(!css.contains("#overlay {\n  position: fixed;\n  inset: 0;\n  margin: 0;\n  padding: 0;\n  border: 0;\n  opacity: var(--opacity, 1);\n  transform:"));
+        assert!(!html.contains("id=\"overlay\""));
+        assert!(html.contains("<body>\n    <section id=\"primary\""));
     }
 
     #[test]
@@ -489,23 +489,15 @@ mod tests {
         let party = html.find("id=\"party\"").unwrap();
         assert!(primary < party);
         assert!(html.contains("members.slice(0, 3)"));
-        assert!(css.contains("#overlay {\n  position: fixed;\n  inset: 0;"));
         assert!(css.contains("flex-direction: column;"));
         assert!(css.contains(
-            ".primary {\n  position: absolute;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
+            ".primary {\n  position: fixed;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
         ));
         assert!(
-            css.contains("top: calc(var(--y, 27%) + var(--primary-scaled-height, 112px) + 7px);")
+            css.contains(".party { position: fixed; left: var(--x, .6%); top: calc(var(--y, 27%) + var(--primary-scaled-height, 112px) + 7px);")
         );
         assert!(css.contains("transform-origin: 0 0;"));
-        let overlay_rule = css
-            .split("#overlay {")
-            .nth(1)
-            .unwrap()
-            .split('}')
-            .next()
-            .unwrap();
-        assert!(!overlay_rule.contains("transform:"));
+        assert!(!css.contains("#overlay"));
     }
 
     #[test]
@@ -518,9 +510,14 @@ mod tests {
             .split('}')
             .next()
             .unwrap();
+        assert!(owner_rule.contains("position: fixed;"));
         assert!(owner_rule.contains("left: var(--x, .6%);"));
         assert!(owner_rule.contains("top: var(--y, 27%);"));
         assert!(css.contains("--primary-scaled-height"));
+        assert!(
+            include_str!("../tests/browser/overlay-anchor.html")
+                .contains("getComputedStyle(owner)")
+        );
 
         let viewport = (1920.0_f32, 1080.0_f32);
         let configured = (0.6_f32, 27.0_f32);
