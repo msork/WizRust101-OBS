@@ -1,16 +1,38 @@
 //! Compact location presentation helpers shared by state serialization and UI.
 
 /// Selects an original, bundled vector sigil from the exact world label resolved
-/// by the WizRust101-DB catalog. Related worlds share a visual motif.
+/// by the WizRust101-DB catalog. Every known label is listed so catalog growth
+/// is caught by the coverage test below.
 pub fn world_icon(world: Option<&str>) -> &'static str {
     match world {
-        Some("Wizard City" | "Krokotopia" | "Marleybone" | "Wysteria") => "spiral",
-        Some("Dragonspyre" | "Aquila" | "Darkmoor" | "Castle Darkmoor") => "flame",
-        Some("Celestia" | "Polaris" | "Empyrea" | "Wallaru") => "star",
-        Some("Grizzleheim" | "Zafaria" | "Azteca") => "leaf",
-        Some("MooShu" | "Avalon" | "Arcanum") => "moon",
-        Some("Khrysalis" | "Mirage" | "Novus" | "Lemuria" | "Karamelle") => "crown",
-        Some("Kembaalung Village" | "Zigazag" | "PetDerby" | "Raids") => "mountain",
+        Some("Wizard City") => "spiral",
+        Some("Krokotopia") => "spiral",
+        Some("Marleybone") => "spiral",
+        Some("Wysteria") => "spiral",
+        Some("Dragonspyre") => "flame",
+        Some("Aquila") => "flame",
+        Some("Darkmoor") => "flame",
+        Some("Castle Darkmoor") => "flame",
+        Some("Celestia") => "star",
+        Some("Polaris") => "star",
+        Some("Empyrea") => "star",
+        Some("Wallaru") => "star",
+        Some("Grizzleheim") => "leaf",
+        Some("Zafaria") => "leaf",
+        Some("Azteca") => "leaf",
+        Some("MooShu") => "moon",
+        Some("Avalon") => "moon",
+        Some("Arcanum") => "moon",
+        Some("Khrysalis") => "crown",
+        Some("Mirage") => "crown",
+        Some("Novus") => "crown",
+        Some("Lemuria") => "crown",
+        Some("Karamelle") => "crown",
+        Some("Kembaalung Village") => "mountain",
+        Some("Zigazag") => "mountain",
+        Some("PetDerby") => "mountain",
+        Some("Raids") => "mountain",
+        Some("Unknown") => "unknown",
         Some(_) | None => "unknown",
     }
 }
@@ -56,5 +78,24 @@ mod tests {
         assert_eq!(world_icon(Some("Unknown")), "unknown");
         assert_eq!(world_icon(Some("unmapped future world")), "unknown");
         assert_eq!(world_icon(None), "unknown");
+    }
+
+    #[test]
+    fn every_world_in_the_bundled_db_has_world_art_or_explicit_unknown() {
+        let catalog = crate::mapping::runtime_catalog().unwrap();
+        let worlds = catalog
+            .zones
+            .values()
+            .filter_map(|zone| zone.world.as_deref())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(worlds.len() >= 25, "expected complete DB world coverage");
+        for world in worlds {
+            assert_ne!(
+                world_icon(Some(world)),
+                "unknown",
+                "missing art for {world}"
+            );
+        }
+        assert_eq!(world_icon(Some("Unknown")), "unknown");
     }
 }

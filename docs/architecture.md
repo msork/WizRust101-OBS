@@ -32,6 +32,8 @@ Each overlay derives its primary wizard from that app's own active profile and g
 
 The primary card presents DB-resolved world name and zone beside an original inline vector sigil selected from the resolved world label. Party cards omit world-name text and show only that sigil plus the zone under name/school identity. Unknown and unmapped labels select a built-in fallback. Icon selection is recomputed during every local SSE enrichment and party snapshot update, so location and icon changes appear without reconnecting. Party change notices refer to the remote wizard's zone only.
 
+World art selection is centralized in `presentation::world_icon`; the bundled SVG symbols are original geometric designs keyed by those stable IDs. A coverage test walks every world in the bundled DB catalog so a newly resolved world cannot silently fall through to the unknown mark. Local and party sigils use fixed square viewports and shared stroke/crop rules. Cards reserve stable location heights and ellipsize long labels, avoiding size jumps when zone/world text changes. The layout uses bounded viewport-relative sizing: at 1920x1080 it lays out two columns of compact party cards beside the local plaque; at 2560x1440 the available party width permits three columns. The party grid is capped at the supported eight guests.
+
 The app uses event-driven full roster snapshots rather than per-member UI commands. This follows the Pokélink web-source pattern of an initial party roster plus party update events, with a simpler local protocol and state model.
 
 ## Invite, authentication, and network exposure
