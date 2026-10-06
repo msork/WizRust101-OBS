@@ -105,6 +105,45 @@ impl SharedState {
             self.publish_current();
         }
     }
+    pub fn replace_party(&self, members: Vec<WizardPresence>, local_member_id: &str) -> bool {
+        if members.len() > 9
+            || members
+                .iter()
+                .any(|member| !crate::peer::valid_presence(member))
+        {
+            return false;
+        }
+        let mut ids = std::collections::HashSet::new();
+        if members.iter().any(|member| {
+            member.peer_id.is_empty()
+                || member.peer_id.len() > 64
+                || !ids.insert(member.peer_id.as_str())
+        }) {
+            return false;
+        }
+        let roster = members
+            .into_iter()
+            .filter(|member| member.peer_id != local_member_id)
+            .map(|member| (member.peer_id.clone(), member))
+            .collect::<BTreeMap<_, _>>();
+        *self.party.lock().unwrap() = roster;
+        self.publish_current();
+        true
+    }
+    pub fn clear_party(&self) {
+        let changed = {
+            let mut party = self.party.lock().unwrap();
+            if party.is_empty() {
+                false
+            } else {
+                party.clear();
+                true
+            }
+        };
+        if changed {
+            self.publish_current();
+        }
+    }
     pub fn apply(&self, event: GameEvent, catalog: &ZoneCatalog) {
         let mut s = self.state.lock().unwrap();
         match event {
@@ -231,6 +270,55 @@ mod tests {
         assert!(!stopped.active);
         assert_eq!(stopped.session_seconds, 0);
         assert_eq!(stopped.zone, None);
+    }
+
+    #[test]
+    fn party_roster_replaces_remote_members_without_replacing_local_primary() {
+        use crate::config::CharacterProfile;
+        let mut config = AppConfig::default();
+        config.profiles.push(CharacterProfile {
+            id: "local-profile".into(),
+            name: "Local Wizard".into(),
+            school: "Life".into(),
+            ..Default::default()
+        });
+        config.active_profile = Some("local-profile".into());
+        let state = SharedState::new(config);
+        let mut remote = WizardPresence {
+            peer_id: "host".into(),
+            name: "Remote Host".into(),
+            school: "Storm".into(),
+            active: true,
+            world: Some("Wizard City".into()),
+            zone: Some("The Commons".into()),
+            session_seconds: 22,
+        };
+        assert!(state.replace_party(vec![remote.clone()], "member-self"));
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.wizard.as_ref().unwrap().name, "Local Wizard");
+        assert_eq!(snapshot.party.len(), 1);
+        assert_eq!(snapshot.party[0].name, "Remote Host");
+
+        remote.peer_id = "member-self".into();
+        assert!(state.replace_party(vec![remote], "member-self"));
+        assert!(state.snapshot().party.is_empty());
+        assert_eq!(
+            state.snapshot().wizard.as_ref().unwrap().name,
+            "Local Wizard"
+        );
+    }
+
+    #[test]
+    fn malformed_and_duplicate_party_roster_entries_are_rejected() {
+        let state = SharedState::new(AppConfig::default());
+        let guest = WizardPresence {
+            peer_id: "same".into(),
+            name: "Guest".into(),
+            school: "Myth".into(),
+            ..Default::default()
+        };
+        assert!(!state.replace_party(vec![guest.clone(), guest], "local"));
+        assert!(state.snapshot().party.is_empty());
     }
 
     #[test]

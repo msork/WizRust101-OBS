@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     config::{AppConfig, CharacterProfile, SCHOOLS},
-    peer::{self, PairingInvite},
+    peer::{self},
     state::SharedState,
 };
 use eframe::egui::{
@@ -84,7 +84,6 @@ struct SettingsApp {
     status: String,
     invite_text: String,
     import_text: String,
-    import_label: String,
     selected_profile: String,
     quit: Arc<Mutex<bool>>,
     tray_rx: Receiver<TrayAction>,
@@ -119,7 +118,6 @@ impl SettingsApp {
             status: "Ready • your settings stay on this device".into(),
             invite_text: String::new(),
             import_text: String::new(),
-            import_label: String::new(),
             selected_profile,
             quit,
             tray_rx,
@@ -146,57 +144,110 @@ impl SettingsApp {
             .find(|p| p.id == self.selected_profile)
     }
     fn create_invite(&mut self) {
-        let id = format!("wizard-{}", rand::random::<u32>());
+        if !self.draft.collaboration_server_enabled {
+            self.status = "Start hosting before creating an invite".into();
+            return;
+        }
+        let connected: std::collections::HashSet<_> = self
+            .shared
+            .snapshot()
+            .party
+            .into_iter()
+            .map(|member| member.peer_id)
+            .collect();
+        self.draft.peer_links.retain(|peer| {
+            peer.expires_at_unix
+                .is_none_or(|expires| expires > peer::unix_now())
+                || connected.contains(&peer.peer_id)
+        });
+        if self.draft.peer_links.len() >= 8 {
+            self.status = "This party has reached its eight invite limit".into();
+            return;
+        }
+        let Some(profile) = self
+            .draft
+            .active_profile
+            .as_ref()
+            .and_then(|id| self.draft.profiles.iter().find(|p| &p.id == id))
+        else {
+            self.status = "Choose a primary wizard before hosting a party".into();
+            return;
+        };
+        let host_label = profile.name.clone();
+        let id = format!("member-{}", rand::random::<u64>());
         match peer::create_pairing(id) {
-            Ok((credential, _)) => {
-                let host = self.draft.advertised_host.trim();
-                let url = if host.is_empty() {
-                    format!(
-                        "ws://YOUR_HOST_ADDRESS:{}/peer?peer_id={}",
-                        peer::PEER_PORT,
-                        credential.peer_id
-                    )
+            Ok((mut credential, _)) => {
+                credential.label = host_label;
+                let host = if self.draft.manual_address_override {
+                    self.draft.advertised_host.trim().to_owned()
                 } else {
-                    peer::invite_for(&credential, host)
-                        .map(|i| i.url)
-                        .unwrap_or_default()
+                    match peer::suggested_host(self.draft.upnp_port_forward) {
+                        Ok(host) => host,
+                        Err(_) if !self.draft.advertised_host.trim().is_empty() => {
+                            self.draft.advertised_host.trim().to_owned()
+                        }
+                        Err(error) => {
+                            self.status = format!("Could not prepare an invite: {error}");
+                            return;
+                        }
+                    }
                 };
-                let invite = PairingInvite {
-                    peer_id: credential.peer_id.clone(),
-                    secret: credential.secret.clone(),
-                    url,
-                };
-                self.draft.peer_links.push(credential);
-                self.invite_text = serde_json::to_string_pretty(&invite).unwrap_or_default();
-                self.save();
-                self.status =
-                    "Pairing created. Share this secret only with the person you intend to connect."
-                        .into()
+                self.draft.advertised_host = host.clone();
+                match peer::invite_for(&credential, &host, self.draft.peer_port) {
+                    Ok(invite) => {
+                        self.invite_text = peer::encode_invite(&invite).unwrap_or_default();
+                        self.draft.peer_links.push(credential);
+                        self.save();
+                        self.status = "Party invite ready to copy".into();
+                    }
+                    Err(error) => self.status = format!("Could not prepare an invite: {error}"),
+                }
             }
             Err(e) => self.status = e,
         }
     }
     fn import_invite(&mut self) {
-        match peer::import_invite(&self.import_text, self.import_label.trim().to_owned()) {
+        if self
+            .draft
+            .active_profile
+            .as_ref()
+            .and_then(|id| self.draft.profiles.iter().find(|profile| &profile.id == id))
+            .is_none_or(|profile| profile.name.trim().is_empty())
+        {
+            self.status = "Choose a named primary wizard before joining a party".into();
+            return;
+        }
+        match peer::import_invite(&self.import_text, String::new()) {
             Ok(link) => {
-                if let Some(existing) = self
-                    .draft
-                    .peer_links
-                    .iter_mut()
-                    .find(|p| p.peer_id == link.peer_id)
-                {
-                    *existing = link;
-                } else {
-                    self.draft.peer_links.push(link);
-                }
-                self.import_text.clear();
-                self.import_label.clear();
+                self.draft.collaboration_server_enabled = false;
+                self.draft.upnp_port_forward = false;
+                self.draft.peer_links.clear();
+                self.draft.peer_links.push(link);
+                self.shared.clear_party();
                 self.save();
-                self.status =
-                    "Paired connection saved. It will connect while the app is running.".into()
+                self.status = "Joining party. Waiting for the host…".into()
             }
             Err(e) => self.status = e,
         }
+    }
+    fn host_party(&mut self) {
+        if self.draft.active_profile.is_none() {
+            self.status = "Choose a primary wizard before hosting a party".into();
+            return;
+        }
+        self.draft.peer_links.clear();
+        self.shared.clear_party();
+        self.draft.collaboration_server_enabled = true;
+        self.create_invite();
+    }
+    fn leave_party(&mut self) {
+        self.draft.collaboration_server_enabled = false;
+        self.draft.upnp_port_forward = false;
+        self.draft.peer_links.clear();
+        self.invite_text.clear();
+        self.shared.clear_party();
+        self.save();
+        self.status = "You left the party".into();
     }
     fn top(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -286,7 +337,7 @@ impl SettingsApp {
         section(
             ui,
             "OBS BROWSER SOURCE",
-            "Add this URL as a Browser Source • canvas 1920 × 1080",
+            "Add this URL as a Browser Source • canvas 1920 x- 1080",
         );
         ui.horizontal(|ui| {
             ui.label(RichText::new("http://127.0.0.1:17841/overlay").monospace());
@@ -381,100 +432,182 @@ impl SettingsApp {
     fn party_ui(&mut self, ui: &mut egui::Ui) {
         section(
             ui,
-            "PARTY PRESENCE",
-            "Your wizard remains the prominent lead. Connected friends appear as smaller party cards.",
+            "YOUR WIZARDS, TOGETHER",
+            "Share a small live roster while every stream keeps its own wizard in front.",
         );
-        ui.add_space(8.0);
-        setting_toggle(
-            ui,
-            "Enable my peer server",
-            &mut self.draft.collaboration_server_enabled,
-            "Off by default. Enables only the authenticated peer socket on port 17842.",
-        );
-        setting_toggle(
-            ui,
-            "Request UPnP port forwarding",
-            &mut self.draft.upnp_port_forward,
-            "Off by default. Only requested while your peer server is enabled.",
-        );
-        ui.add_enabled_ui(self.draft.collaboration_server_enabled, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Reachable host name or IP");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.advertised_host)
-                        .hint_text("Enter your reachable LAN or public address")
-                        .desired_width(310.0),
-                );
-                if brass_button(ui, "Create invitation").clicked() {
-                    self.create_invite();
+        ui.add_space(10.0);
+        let hosting = self.draft.collaboration_server_enabled;
+        let joining = self
+            .draft
+            .peer_links
+            .iter()
+            .any(|p| p.connect_url.is_some());
+        let members = self.shared.snapshot().party;
+        Frame::new()
+            .fill(PAPER_LIGHT)
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(207, 180, 123)))
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(egui::Margin::symmetric(14, 12))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("✧").size(24.0).color(GOLD));
+                    ui.vertical(|ui| {
+                        let invite_expired = self.draft.peer_links.iter().any(|peer| {
+                            peer.connect_url.is_some()
+                                && peer
+                                    .expires_at_unix
+                                    .is_some_and(|expires| expires <= peer::unix_now())
+                        });
+                        let (title, detail) = if hosting {
+                            ("Hosting Party", "Your invite is ready to share")
+                        } else if joining && members.is_empty() && invite_expired {
+                            ("Invite Expired", "Paste a fresh party invite to reconnect")
+                        } else if joining && members.is_empty() {
+                            ("Joining Party", "Waiting for the host to return")
+                        } else if joining {
+                            ("In a Party", "Your wizard is connected")
+                        } else {
+                            ("No Party Yet", "Host a party or paste an invite to join")
+                        };
+                        ui.label(RichText::new(title).strong().color(RED));
+                        ui.label(RichText::new(detail).small().color(INK));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if hosting {
+                            if brass_button(ui, "Create Invite").clicked() {
+                                self.create_invite();
+                            }
+                        } else if !joining && brass_button(ui, "Host Party").clicked() {
+                            self.host_party();
+                        }
+                        if (hosting || joining) && ui.button("Leave Party").clicked() {
+                            self.leave_party();
+                        }
+                    });
+                });
+                if hosting && !self.invite_text.is_empty() {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Invite ready - valid for 24 hours").small());
+                        if brass_button(ui, "Copy Invite").clicked() {
+                            ui.ctx().copy_text(self.invite_text.clone());
+                            self.status = "Party invite copied".into();
+                        }
+                    });
                 }
             });
-            if !self.invite_text.is_empty() {
-                ui.label("ONE-TIME DISPLAY • treat this pairing secret like a password");
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.invite_text)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY),
-                );
-                if ui.button("Copy invitation").clicked() {
-                    ui.ctx().copy_text(self.invite_text.clone());
-                    self.status = "Pairing invitation copied".into();
-                }
-            }
-        });
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new("PAIR WITH ANOTHER WIZRUST101-OBS INSTANCE")
-                .strong()
-                .color(RED),
-        );
+
+        ui.add_space(12.0);
+        ui.label(RichText::new("JOIN A PARTY").strong().color(RED));
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.import_label)
-                    .hint_text("Friend label")
-                    .desired_width(155.0),
+                egui::TextEdit::singleline(&mut self.import_text)
+                    .hint_text("Paste a party invite here")
+                    .desired_width(580.0),
             );
-            if brass_button(ui, "Import invitation").clicked() {
+            if brass_button(ui, "Join Party").clicked() {
                 self.import_invite();
             }
         });
-        ui.add(
-            egui::TextEdit::multiline(&mut self.import_text)
-                .hint_text("Paste the pairing JSON shared by the host")
-                .desired_rows(3)
-                .desired_width(f32::INFINITY),
-        );
-        if !self.draft.peer_links.is_empty() {
-            ui.add_space(8.0);
-            ui.label(RichText::new("PAIRED PEERS").strong().color(RED));
-            let mut remove = None;
-            for peer in &self.draft.peer_links {
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("PARTY ROSTER").strong().color(RED));
+            ui.label(
+                RichText::new(format!("{} connected", members.len()))
+                    .small()
+                    .color(INK),
+            );
+        });
+        if members.is_empty() {
+            ui.label(
+                RichText::new("Connected wizards will appear here.")
+                    .small()
+                    .color(INK),
+            );
+        } else {
+            for member in &members {
                 ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "{}  •  {}",
-                        if peer.connect_url.is_some() {
-                            "↔"
-                        } else {
-                            "Invite"
-                        },
-                        if peer.label.is_empty() {
-                            &peer.peer_id
-                        } else {
-                            &peer.label
-                        }
-                    ));
-                    if ui.small_button("Remove").clicked() {
-                        remove = Some(peer.peer_id.clone());
-                    }
+                    ui.label(RichText::new("•").color(if member.active {
+                        Color32::from_rgb(94, 135, 79)
+                    } else {
+                        GOLD
+                    }));
+                    ui.label(
+                        RichText::new(&member.name)
+                            .strong()
+                            .color(school_color(&member.school)),
+                    );
+                    ui.label(RichText::new(format!("- {}", member.school)).small());
+                    let status = if member.active {
+                        format!(
+                            "Online - {}",
+                            [member.world.as_deref(), member.zone.as_deref()]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join(" - ")
+                        )
+                    } else {
+                        "Online - between worlds".into()
+                    };
+                    ui.label(RichText::new(status).small().color(INK));
                 });
             }
-            if let Some(id) = remove {
-                self.draft.peer_links.retain(|p| p.peer_id != id);
-                self.shared.remove_peer(&id);
+        }
+        if hosting {
+            for invite in self
+                .draft
+                .peer_links
+                .iter()
+                .filter(|p| p.connect_url.is_none())
+            {
+                if !members
+                    .iter()
+                    .any(|member| member.peer_id == invite.peer_id)
+                {
+                    let expired = invite
+                        .expires_at_unix
+                        .is_some_and(|t| t <= crate::peer::unix_now());
+                    ui.label(
+                        RichText::new(if expired {
+                            "Invite expired"
+                        } else {
+                            "Invite sent - waiting to join"
+                        })
+                        .small()
+                        .color(Color32::from_rgb(110, 89, 67)),
+                    );
+                }
             }
         }
-        ui.add_space(8.0);
-        ui.label(RichText::new("Pairing uses Noise PSK encryption. Only an imported pairing secret is accepted; the peer socket cannot read OBS state or local configuration.").small().color(Color32::from_rgb(89,72,55)));
+
+        ui.add_space(10.0);
+        setting_toggle(
+            ui,
+            "Automatic router setup",
+            &mut self.draft.upnp_port_forward,
+            "Optional. Off by default; used only while hosting to help friends connect over the internet.",
+        );
+        egui::CollapsingHeader::new("Advanced address and port")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut self.draft.manual_address_override,
+                    "Use the address I enter below in new invites",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Reachable address");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.draft.advertised_host)
+                            .hint_text("Detected automatically when possible")
+                            .desired_width(300.0),
+                    );
+                    ui.label("Party port");
+                    ui.add(egui::DragValue::new(&mut self.draft.peer_port).range(1024..=65535));
+                });
+                ui.label(RichText::new("Change these only for a manual router rule or a non-default network setup. New invites include both values.").small());
+            });
     }
 }
 

@@ -1,13 +1,13 @@
 # Development status
 
-## M1 and M2 vertical slice
+## M1-M3 vertical slice
 
-Implemented: RPC-derived Steam discovery/follow/parser behavior; WizRust101-DB-backed world/zone resolution; local session state; configurable profiles and school validation; loopback Axum overlay HTTP/SSE; transparent persistent character/location plaque and animated zone arrival; demo mode; native eframe settings UI hidden at startup; Windows/macOS tray and Linux StatusNotifierItem; hide-on-close and explicit Quit; optional Noise-PSK peer presence with pairing and opt-in UPnP forwarding; documentation and tests.
+Implemented: RPC-derived Steam discovery/follow/parser behavior; WizRust101-DB-backed location resolution; local session state; configurable profiles/schools; loopback Axum overlay HTTP/SSE; transparent primary plaque, zone arrival, and party event transitions; demo mode; hidden-start native settings via cross-platform tray; host/join/leave Party UX; versioned expiring copy/paste invites; Noise PSK authenticated/encrypted peer channel; host-authoritative live roster relay; default-off UPnP and advanced manual address/port settings; specs, research, and test coverage.
 
-The local server exposes only `/overlay`, `/style.css`, `/state`, and `/events`; there is no settings page or config endpoint. Peer and overlay listeners use distinct ports and route sets.
+The peer layer supports one host and up to eight guests. Each invite identifies one guest and can be used by one active connection at a time. Every participant sees their own configured character as the primary card; remote party members are smaller cards.
 
 ## Remaining acceptance
 
-Needs runtime visual/interaction acceptance with OBS Browser Source (including CEF rendering), tray shell acceptance on Windows/macOS and a Linux desktop with StatusNotifierItem support, live game/log discovery acceptance on each OS, and network acceptance for two real paired clients behind representative routers. UPnP behavior is inherently router-dependent. Release installers/workflows are not part of this milestone.
+Needs real two-or-more-instance LAN/internet testing, router/UPnP/CGNAT testing, OBS Browser Source visual acceptance, and tray/native UI acceptance on Windows, macOS, and Linux desktops. Direct internet hosting needs UPnP or manual router/address setup; no cloud relay is supplied. The Windows MSVC target is the only cross-target available on the development machine. Installers/release workflows are not part of this milestone.
 
-The bundled DB JSON came from the sibling working tree and retains its recorded source revision/hash in `research.md`; package work should establish a pinned submodule or reproducible refresh process. macOS CrossOver and Linux Flatpak Steam paths have not been live-validated on this host.
+The bundled DB JSON keeps its source revision/hash documented in `research.md`; package work should establish a pinned submodule or reproducible refresh process. macOS CrossOver and Linux Flatpak Steam paths remain unvalidated on this host.

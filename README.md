@@ -1,38 +1,41 @@
-![WizRust101-OBS icon](assets/icons/sizes/128.png)
-
 # WizRust101-OBS
 
-A local Rust app that turns verified Wizard101 log observations into a quiet, transparent OBS Browser Source. It is independent of Twitch, YouTube, Kick, and streaming-platform accounts.
+A local Rust application that turns verified Wizard101 log observations into a quiet OBS Browser Source. It works independently of Twitch, YouTube, Kick, and streaming accounts.
 
-## Start
+## Start and preview
 
-Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Its settings window starts hidden. Open it from the WizRust101-OBS tray icon/menu; closing the window hides it. Choose **Quit WizRust101-OBS** to exit. On Linux, use a desktop session with StatusNotifierItem/AppIndicator support.
+Run `cargo run` to start the game-log watcher, local overlay server, and tray/menu-bar app. Settings are hidden initially; activate the WizRust101-OBS tray icon to open them. Close hides the window. Choose **Quit WizRust101-OBS** to exit. Linux needs a desktop StatusNotifierItem/AppIndicator host.
 
-Run `cargo run -- --demo` to preview sample profiles, locations, zone transitions, and session start/stop without launching Wizard101. Configure a saved profile and select it as the primary wizard in **My Wizard**.
+Run `cargo run -- --demo` to preview sample characters, worlds/zones, transitions, and session start/stop without launching Wizard101. Create a saved profile and select it as your primary wizard under **My Wizard**.
 
-## Add the overlay to OBS
+## OBS Browser Source
 
-In the native **Overlay** settings tab, click **Copy overlay URL**. In OBS:
+In **Overlay** settings, click **Copy overlay URL**. In OBS:
 
 1. Add a **Browser** source.
 2. Leave **Local file** unchecked.
 3. Paste `http://127.0.0.1:17841/overlay` as the URL.
-4. Set width to `1920` and height to `1080` (or use your 16:9 canvas dimensions).
-5. Keep WizRust101-OBS running while OBS uses the source.
+4. Set width to `1920` and height to `1080` (or your 16:9 canvas size).
+5. Keep WizRust101-OBS running while the source is in use.
 
-The source document is transparent. The persistent plaque shows your manually selected wizard plus the automatically observed world and zone. Zone changes trigger a restrained temporary reveal. The panel placement, scale, opacity, transition duration, and both elements can be adjusted in settings.
+The transparent page displays the manually selected wizard and automatically observed location. Zone arrivals and party events use short restrained notices. Placement, scale, opacity, transition duration, and both overlay elements can be changed in settings.
 
-## Optional party presence
+## Host or join a Party
 
-Both participants need WizRust101-OBS. The listener must explicitly enable **Enable my peer server** and save settings. **Request UPnP port forwarding** is a separate opt-in and defaults off. Create an invitation, share its JSON privately, and import it on the connecting instance. Invitations and `config.json` contain pairing secrets; treat them as credentials. Each overlay keeps its own wizard prominent; connected peers appear as smaller party cards.
+1. Set your active wizard profile first.
+2. In **Party**, choose **Host Party**. This explicitly starts your peer listener and creates an invite.
+3. Click **Copy Invite** and privately share the code. Each invite is for one guest and expires after 24 hours; create another invite for each additional participant.
+4. Guests paste the code and click **Join Party**. Use **Leave Party** to disconnect and remove party credentials.
 
-Peer presence uses a separate authenticated/encrypted Noise PSK WebSocket on TCP port 17842. The peer listener does not serve the OBS page or configuration. A reachable LAN/public host and firewall/router configuration may be required; UPnP is not available on every network and does not work around all CGNAT setups. No port is opened or forwarded automatically.
+The party roster updates when a wizard joins/leaves or changes observed location. Each participant's own wizard remains the large primary element on their OBS scene; other party members are smaller cards. The peer channel is encrypted and authenticated. The local OBS page/config are not exposed to peers.
 
-## Data and deliberate omissions
+The first invite uses a detected local IPv4 address for same-LAN play. For internet play, the optional **Automatic router setup** can request UPnP forwarding and use the router's reported public address. It is off by default. Some routers or CGNAT networks cannot provide direct reachability. **Advanced address and port** allows manual settings for a router rule. No cloud relay is used.
 
-Automatic information is limited to canonical zone changes parsed from `WizardClient.log`, world/zone names resolved through the WizRust101-DB mapping, best-effort active session state, and a local session duration. Name and school are user configured. The log does not reliably identify the selected character.
+## Automatic data and deliberate omissions
 
-Health, mana, deck/spells, combat, and other game-visible HUD values are intentionally omitted. Current quest/objective tracking is unsupported because no reliable selected-quest evidence has been verified in the log. The app does not inject, read memory, intercept packets, OCR, or modify Wizard101.
+Automatic information is limited to canonical zone changes parsed from `WizardClient.log`, world/zone names resolved through WizRust101-DB, best-effort observed in-world state, and a local session duration. Character name and school are configured by the user; the log does not reliably expose selected identity.
+
+Health, mana, deck/spells, combat, and other game-visible HUD information are omitted. Current quest/objective tracking is unsupported because reliable selected-quest evidence has not been verified. The app does not inject, read memory, intercept packets, OCR, or modify Wizard101.
 
 ## Development
 

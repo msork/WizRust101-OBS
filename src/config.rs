@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub collaboration_server_enabled: bool,
     pub upnp_port_forward: bool,
     pub advertised_host: String,
+    pub peer_port: u16,
+    pub manual_address_override: bool,
     pub peer_links: Vec<PeerCredential>,
     #[serde(flatten)]
     pub future: serde_json::Map<String, serde_json::Value>,
@@ -28,6 +30,7 @@ pub struct PeerCredential {
     pub secret: String,
     pub connect_url: Option<String>,
     pub label: String,
+    pub expires_at_unix: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -62,6 +65,8 @@ impl Default for AppConfig {
             collaboration_server_enabled: false,
             upnp_port_forward: false,
             advertised_host: String::new(),
+            peer_port: crate::peer::PEER_PORT,
+            manual_address_override: false,
             peer_links: vec![],
             future: Default::default(),
         }
@@ -114,9 +119,15 @@ impl AppConfig {
         if self.peer_links.len() > 8 {
             return Err("at most eight paired peers are supported".into());
         }
+        if !(1024..=65535).contains(&self.peer_port) {
+            return Err("party port must be between 1024 and 65535".into());
+        }
         let mut peer_ids = std::collections::HashSet::new();
         for peer in &self.peer_links {
-            if peer.peer_id.is_empty() || peer.peer_id.len() > 64 || !peer_ids.insert(&peer.peer_id)
+            if peer.peer_id.is_empty()
+                || peer.peer_id.len() > 64
+                || peer.peer_id == crate::peer::HOST_MEMBER_ID
+                || !peer_ids.insert(&peer.peer_id)
             {
                 return Err("peer IDs must be unique and 1–64 characters".into());
             }
@@ -128,12 +139,8 @@ impl AppConfig {
             if secret.len() != 32 {
                 return Err("peer secrets must contain 32 bytes".into());
             }
-            if peer
-                .connect_url
-                .as_ref()
-                .is_some_and(|url| !url.starts_with("ws://"))
-            {
-                return Err("peer URL must use ws:// (Noise encrypts peer messages)".into());
+            if let Some(url) = &peer.connect_url {
+                crate::peer::validate_peer_url(url, &peer.peer_id)?;
             }
         }
         let o = &self.overlay;
