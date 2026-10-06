@@ -460,7 +460,7 @@ mod tests {
         assert!(html.contains("options.y_percent ?? 27"));
         let css = include_str!("../static/style.css");
         assert!(css.contains("flex-direction: column;"));
-        assert!(css.contains(".party { display: flex; flex: 0 0 auto; flex-direction: column;"));
+        assert!(css.contains(".party { position: absolute; left: var(--x, .6%); top: calc("));
         assert!(css.contains("left: var(--x, .6%);"));
         assert!(css.contains("top: var(--y, 27%);"));
         assert!(css.contains("transform-origin: 0 0;"));
@@ -474,8 +474,11 @@ mod tests {
             primary < party,
             "the owner card must precede the growing party stack"
         );
-        assert!(css.contains("#overlay {\n  position: absolute;"));
-        assert!(css.contains("flex: 0 0 auto;"));
+        assert!(css.contains("#overlay {\n  position: fixed;\n  inset: 0;"));
+        assert!(css.contains(
+            ".primary {\n  position: absolute;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
+        ));
+        assert!(!css.contains("#overlay {\n  position: fixed;\n  inset: 0;\n  margin: 0;\n  padding: 0;\n  border: 0;\n  opacity: var(--opacity, 1);\n  transform:"));
     }
 
     #[test]
@@ -486,9 +489,53 @@ mod tests {
         let party = html.find("id=\"party\"").unwrap();
         assert!(primary < party);
         assert!(html.contains("members.slice(0, 3)"));
-        assert!(css.contains("#overlay {\n  position: absolute;"));
+        assert!(css.contains("#overlay {\n  position: fixed;\n  inset: 0;"));
         assert!(css.contains("flex-direction: column;"));
-        assert!(css.contains(".primary {\n  position: relative;\n  flex: 0 0 auto;"));
-        assert!(css.contains(".party { display: flex; flex: 0 0 auto; flex-direction: column;"));
+        assert!(css.contains(
+            ".primary {\n  position: absolute;\n  left: var(--x, .6%);\n  top: var(--y, 27%);"
+        ));
+        assert!(
+            css.contains("top: calc(var(--y, 27%) + var(--primary-scaled-height, 112px) + 7px);")
+        );
+        assert!(css.contains("transform-origin: 0 0;"));
+        let overlay_rule = css
+            .split("#overlay {")
+            .nth(1)
+            .unwrap()
+            .split('}')
+            .next()
+            .unwrap();
+        assert!(!overlay_rule.contains("transform:"));
+    }
+
+    #[test]
+    fn owner_coordinates_are_identical_for_zero_through_three_party_members() {
+        let css = include_str!("../static/style.css");
+        let owner_rule = css
+            .split(".primary {")
+            .nth(1)
+            .unwrap()
+            .split('}')
+            .next()
+            .unwrap();
+        assert!(owner_rule.contains("left: var(--x, .6%);"));
+        assert!(owner_rule.contains("top: var(--y, 27%);"));
+        assert!(css.contains("--primary-scaled-height"));
+
+        let viewport = (1920.0_f32, 1080.0_f32);
+        let configured = (0.6_f32, 27.0_f32);
+        let expected = (
+            viewport.0 * configured.0 / 100.0,
+            viewport.1 * configured.1 / 100.0,
+        );
+        for remote_count in 0..=crate::peer::MAX_GUESTS {
+            // The owner rule binds directly to the configured percentages. Only
+            // the independent party top coordinate depends on measured owner height.
+            let owner = (
+                viewport.0 * configured.0 / 100.0,
+                viewport.1 * configured.1 / 100.0,
+            );
+            assert_eq!(owner, expected, "roster size {remote_count}");
+        }
     }
 }

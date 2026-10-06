@@ -426,10 +426,41 @@ impl IssuedInvites {
         Ok(())
     }
 
-    fn retain_unused(&mut self, connected: &HashSet<String>, now: u64) {
-        self.0
-            .retain(|invite| invite.expires_at_unix > now && !connected.contains(&invite.peer_id));
+    fn reconcile(
+        &mut self,
+        connected: &HashSet<String>,
+        now: u64,
+        capacity: usize,
+    ) -> HashSet<String> {
+        let mut invalidate = HashSet::new();
+        self.0.retain(|invite| {
+            if connected.contains(&invite.peer_id) {
+                false
+            } else if invite.expires_at_unix <= now {
+                invalidate.insert(invite.peer_id.clone());
+                false
+            } else {
+                true
+            }
+        });
+        if self.0.len() > capacity {
+            invalidate.extend(
+                self.0
+                    .split_off(capacity)
+                    .into_iter()
+                    .map(|invite| invite.peer_id),
+            );
+        }
+        invalidate
     }
+}
+
+fn available_invite_slots(remote_members: usize) -> usize {
+    peer::MAX_GUESTS.saturating_sub(remote_members.min(peer::MAX_GUESTS))
+}
+
+fn can_create_invite(unused_invites: usize, capacity: usize) -> bool {
+    capacity > 0 && unused_invites < capacity
 }
 
 fn school_icon_bytes(school: &str) -> &'static [u8] {
@@ -604,28 +635,15 @@ impl SettingsApp {
             self.status = "Start hosting before creating an invite".into();
             return;
         }
-        let connected: std::collections::HashSet<_> = self
-            .shared
-            .snapshot()
-            .party
-            .into_iter()
-            .map(|member| member.peer_id)
-            .collect();
-        let now = peer::unix_now();
-        let expired: HashSet<_> = self
-            .draft
-            .peer_links
-            .iter()
-            .filter(|link| link.connect_url.is_none())
-            .filter(|link| link.expires_at_unix.is_some_and(|expires| expires <= now))
-            .map(|link| link.peer_id.clone())
-            .collect();
-        self.draft
-            .peer_links
-            .retain(|link| !expired.contains(&link.peer_id));
-        self.issued_invites.retain_unused(&connected, now);
-        if self.issued_invites.0.len() >= peer::MAX_GUESTS {
-            self.status = "All three invites are in use. A used invite cannot be reused.".into();
+        let members = self.shared.snapshot().party;
+        self.reconcile_invites(&members);
+        let capacity = available_invite_slots(members.len());
+        if capacity == 0 {
+            self.status = "The Party is full. No more invites can be created.".into();
+            return;
+        }
+        if self.issued_invites.0.len() >= capacity {
+            self.status = format!("All {capacity} available guest slots already have invites.");
             return;
         }
         let Some(profile) = self
@@ -724,6 +742,25 @@ impl SettingsApp {
         self.shared.set_party_status(None);
         self.draft.collaboration_server_enabled = true;
         self.create_invite(ctx);
+    }
+
+    fn reconcile_invites(&mut self, members: &[crate::state::WizardPresence]) {
+        let connected: HashSet<_> = members
+            .iter()
+            .map(|member| member.peer_id.clone())
+            .collect();
+        let capacity = available_invite_slots(members.len());
+        let invalidated = self
+            .issued_invites
+            .reconcile(&connected, peer::unix_now(), capacity);
+        if !invalidated.is_empty() {
+            self.draft
+                .peer_links
+                .retain(|link| !invalidated.contains(&link.peer_id));
+            // The peer acceptor reads this shared config directly, so publish
+            // revocation now rather than waiting for the periodic autosave.
+            self.persist(false);
+        }
     }
     fn leave_party(&mut self) {
         self.draft.collaboration_server_enabled = false;
@@ -984,7 +1021,9 @@ impl SettingsApp {
             .iter()
             .any(|p| p.connect_url.is_some());
         let members = self.shared.snapshot().party;
+        self.reconcile_invites(&members);
         let occupancy = party_occupancy(members.len());
+        let invite_capacity = available_invite_slots(members.len());
         Frame::new()
             .fill(colors.surface)
             .stroke(Stroke::new(1.0_f32, colors.edge))
@@ -1015,9 +1054,13 @@ impl SettingsApp {
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if hosting {
-                            if brass_button(ui, "Create Invite").clicked() {
-                                self.create_invite(ui.ctx());
-                            }
+                            let can_create =
+                                can_create_invite(self.issued_invites.0.len(), invite_capacity);
+                            ui.add_enabled_ui(can_create, |ui| {
+                                if brass_button(ui, "Create Invite").clicked() {
+                                    self.create_invite(ui.ctx());
+                                }
+                            });
                         } else if !joining && brass_button(ui, "Host Party").clicked() {
                             self.host_party(ui.ctx());
                         }
@@ -1028,35 +1071,26 @@ impl SettingsApp {
                 });
             });
 
-        let connected_ids = members
-            .iter()
-            .map(|member| member.peer_id.clone())
-            .collect();
-        self.issued_invites
-            .retain_unused(&connected_ids, peer::unix_now());
         if hosting {
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("UNUSED INVITES")
-                        .strong()
-                        .color(colors.accent),
-                );
-                ui.label(
-                    RichText::new(format!(
-                        "{}/{}",
-                        self.issued_invites.0.len(),
-                        peer::MAX_GUESTS
-                    ))
-                    .small()
-                    .color(colors.subtitle),
-                );
-            });
+            ui.label(
+                RichText::new(format!(
+                    "Unused invites {}/{}",
+                    self.issued_invites.0.len(),
+                    invite_capacity
+                ))
+                .strong()
+                .color(colors.accent),
+            );
             if self.issued_invites.0.is_empty() {
                 ui.label(
-                    RichText::new("No unused invites. Create one to copy it to the clipboard.")
-                        .small()
-                        .color(colors.subtitle),
+                    RichText::new(if invite_capacity == 0 {
+                        "No guest slots are available while the Party is full."
+                    } else {
+                        "No unused invites. Create one to copy it to the clipboard."
+                    })
+                    .small()
+                    .color(colors.subtitle),
                 );
             }
             for invite in self.issued_invites.0.clone() {
@@ -1743,16 +1777,69 @@ mod icon_tests {
                 .is_err()
         );
 
-        invites.retain_unused(&["guest-1".to_owned()].into(), 100);
+        let revoked = invites.reconcile(&["guest-1".to_owned()].into(), 100, 3);
+        assert!(
+            revoked.is_empty(),
+            "a used invitation stays authorized for reconnect"
+        );
         assert_eq!(invites.0.len(), 2);
-        invites.retain_unused(&HashSet::new(), 100);
+        invites.reconcile(&HashSet::new(), 100, 3);
         assert_eq!(
             invites.0.len(),
             2,
             "a used invite must not reappear after leave"
         );
-        invites.retain_unused(&HashSet::new(), 200);
+        let expired = invites.reconcile(&HashSet::new(), 200, 3);
         assert!(invites.0.is_empty(), "expired invites are no longer active");
+        assert_eq!(expired.len(), 2);
+    }
+
+    #[test]
+    fn unused_invite_capacity_tracks_party_occupancy_from_one_to_four() {
+        for remote_members in 0..crate::peer::MAX_GUESTS {
+            assert_eq!(
+                super::available_invite_slots(remote_members),
+                crate::peer::MAX_GUESTS - remote_members,
+                "Party {}/4 should have the matching number of invite slots",
+                remote_members + 1
+            );
+        }
+        assert_eq!(super::available_invite_slots(crate::peer::MAX_GUESTS), 0);
+        assert!(super::can_create_invite(0, 3));
+        assert!(!super::can_create_invite(3, 3));
+        assert!(
+            !super::can_create_invite(0, 0),
+            "the full-party button is disabled"
+        );
+    }
+
+    #[test]
+    fn joining_member_revokes_unused_invites_that_exceed_remaining_slots() {
+        let mut invites = super::IssuedInvites::default();
+        for index in 0..3 {
+            invites
+                .add(super::IssuedInvite {
+                    peer_id: format!("unused-{index}"),
+                    code: format!("invite-{index}"),
+                    expires_at_unix: 300,
+                })
+                .unwrap();
+        }
+        // A previously invited wizard reconnects, reducing spare capacity to one.
+        let connected = ["reconnected-member".to_owned()].into();
+        let revoked = invites.reconcile(&connected, 100, 1);
+        assert_eq!(invites.0.len(), 1);
+        assert_eq!(revoked.len(), 2);
+        assert!(!revoked.contains("unused-0"));
+        assert!(revoked.contains("unused-1"));
+        assert!(revoked.contains("unused-2"));
+
+        let full = ["reconnected-member".to_owned(), "another-member".to_owned()]
+            .into_iter()
+            .collect();
+        let revoked = invites.reconcile(&full, 100, 0);
+        assert_eq!(invites.0.len(), 0);
+        assert_eq!(revoked, ["unused-0".to_owned()].into());
     }
 
     #[test]

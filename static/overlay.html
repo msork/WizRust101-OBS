@@ -78,6 +78,11 @@
         if (image.getAttribute('src') !== source) image.src = source;
       }
 
+      function updatePartyAnchor() {
+        const height = $('primary').getBoundingClientRect().height;
+        document.documentElement.style.setProperty('--primary-scaled-height', `${height}px`);
+      }
+
       function createPartyCard() {
         const card = document.createElement('article');
         card.className = 'party-card';
@@ -159,6 +164,7 @@
         $('zone-name').textContent = zone;
         $('zone-name').classList.toggle('hidden', !zone);
         setWorldIcon($('primary-world-icon'), state.world_icon);
+        updatePartyAnchor();
 
         renderParty(state.party || []);
 
@@ -181,6 +187,7 @@
         .then(([palette, state]) => { schoolPalette = palette; render(state); })
         .catch(() => {});
       const events = new EventSource('/events');
+      new ResizeObserver(updatePartyAnchor).observe($('primary'));
       events.addEventListener('state', (event) => {
         const state = JSON.parse(event.data);
         if (Object.keys(schoolPalette).length) render(state);
