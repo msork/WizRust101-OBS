@@ -80,8 +80,8 @@
             previous = { ...after, rosterSize };
           }
 
-          const defaultDesign = { ownerWidth: previous.owner.width, ownerHeight: previous.owner.height, partyCardHeight: previous.partyCard.height };
-          for (const preset of ['compact', 'minimal', 'default']) {
+          const modernDesign = { ownerWidth: previous.owner.width, ownerHeight: previous.owner.height, partyCardHeight: previous.partyCard.height };
+          for (const preset of ['compact', 'minimal', 'modern']) {
             const oldRevision = target.__overlayLastRenderedRevision;
             const response = await fetch(`/__test/preset/${preset}`, { method: 'POST' });
             if (!response.ok) throw new Error(`fixture rejected preset ${preset}`);
@@ -100,7 +100,7 @@
             }
             if (preset === 'compact') {
               if (after.owner.display !== 'flex' || after.partyCard?.display !== 'grid') throw new Error('Compact did not preserve its compact plaque and one-row party design');
-              if (after.owner.height >= defaultDesign.ownerHeight || after.partyCard.height >= defaultDesign.partyCardHeight) throw new Error('Compact cards were not physically denser than Default');
+              if (after.owner.height >= modernDesign.ownerHeight || after.partyCard.height >= modernDesign.partyCardHeight) throw new Error('Compact cards were not physically denser than Modern');
             }
             if (preset === 'minimal') {
               if (after.owner.display !== 'grid' || after.partyCard?.display !== 'grid') throw new Error('Minimal did not apply the shared one-line row design');
@@ -112,7 +112,7 @@
               }
               if (getComputedStyle(target.document.querySelector('.party-marker')).display !== 'none') throw new Error('Minimal party rows should omit their separate presence banner');
             }
-            if (preset !== 'default') {
+            if (preset !== 'modern') {
               const overlaps = (left, right) => left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
               const ownerSchoolIcon = target.document.querySelector('#primary-school-icon').getBoundingClientRect();
               const ownerName = target.document.querySelector('#primary-name').getBoundingClientRect();

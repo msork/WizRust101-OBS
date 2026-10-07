@@ -188,7 +188,7 @@
         const opacity = options.opacity ?? 1;
         const partyCardScale = options.party_card_scale ?? 1;
         const backgroundOpacity = options.background_opacity ?? 1;
-        const preset = options.preset || 'default';
+        const preset = options.preset === 'default' ? 'modern' : (options.preset || 'modern');
         document.documentElement.style.setProperty('--x', `${x}%`);
         document.documentElement.style.setProperty('--y', `${y}%`);
         document.documentElement.style.setProperty('--scale', scale);
@@ -207,7 +207,6 @@
         primary.style.opacity = opacity;
         $('party').style.transform = `scale(${scale * (preset === 'minimal' ? 1 : partyCardScale)})`;
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
-        primary.classList.toggle('hidden', options.character_location === false);
         primary.classList.toggle('hide-world-icon', options.show_world_icon === false);
         primary.classList.toggle('hide-school-icon', options.show_school_icon === false);
         $('primary-world-icon').classList.toggle('hidden', options.show_world_icon === false);

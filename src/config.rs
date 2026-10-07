@@ -64,7 +64,6 @@ pub struct CharacterProfile {
 #[serde(default)]
 pub struct OverlayConfig {
     pub preset: OverlayPreset,
-    pub character_location: bool,
     pub zone_transition: bool,
     pub x_percent: f32,
     pub y_percent: f32,
@@ -81,7 +80,8 @@ pub struct OverlayConfig {
 #[serde(rename_all = "lowercase")]
 pub enum OverlayPreset {
     #[default]
-    Default,
+    #[serde(alias = "default")]
+    Modern,
     Compact,
     Minimal,
 }
@@ -117,8 +117,7 @@ impl Default for CharacterProfile {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
-            preset: OverlayPreset::Default,
-            character_location: true,
+            preset: OverlayPreset::Modern,
             zone_transition: true,
             x_percent: 0.6,
             y_percent: 16.0,
@@ -140,7 +139,7 @@ impl OverlayConfig {
             ..Self::default()
         };
         match preset {
-            OverlayPreset::Default => {}
+            OverlayPreset::Modern => {}
             OverlayPreset::Compact => {
                 overlay.background_opacity = 0.72;
             }
@@ -234,6 +233,13 @@ impl AppConfig {
         let has_legacy_party_state = legacy_value.as_object().is_some_and(|object| {
             object.contains_key("peer_links") || object.contains_key("collaboration_server_enabled")
         });
+        let has_legacy_overlay_fields = legacy_value
+            .get("overlay")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|overlay| {
+                overlay.get("preset").and_then(serde_json::Value::as_str) == Some("default")
+                    || overlay.contains_key("character_location")
+            });
         let mut config: Self = serde_json::from_value(legacy_value)?;
         // Migrate only complete, untouched previous defaults. A user-edited
         // field makes the saved overlay their own configuration, so preserve it.
@@ -244,7 +250,7 @@ impl AppConfig {
         config.collaboration_server_enabled = false;
         config.peer_links.clear();
         config.validate()?;
-        if has_legacy_party_state || has_legacy_overlay_position {
+        if has_legacy_party_state || has_legacy_overlay_position || has_legacy_overlay_fields {
             config.save_to_path(path)?;
         }
         Ok(config)
@@ -328,13 +334,12 @@ mod tests {
         assert_eq!(overlay.scale, 1.0);
         assert_eq!(overlay.opacity, 1.0);
         assert_eq!(overlay.transition_seconds, 4.0);
-        assert!(overlay.character_location);
         assert!(overlay.zone_transition);
     }
 
     #[test]
     fn presentation_presets_keep_position_and_toggle_defaults() {
-        let default = OverlayConfig::for_preset(OverlayPreset::Default);
+        let default = OverlayConfig::for_preset(OverlayPreset::Modern);
         let compact = OverlayConfig::for_preset(OverlayPreset::Compact);
         let minimal = OverlayConfig::for_preset(OverlayPreset::Minimal);
         assert_eq!((default.x_percent, default.y_percent), (0.6, 16.0));
@@ -347,11 +352,34 @@ mod tests {
         assert!(compact.background_opacity < default.background_opacity);
         assert!(minimal.background_opacity < compact.background_opacity);
         for preset in [default, compact, minimal] {
-            assert!(preset.character_location);
             assert!(preset.zone_transition);
             assert!(preset.show_world_icon);
             assert!(preset.show_school_icon);
         }
+    }
+
+    #[test]
+    fn legacy_default_preset_and_character_location_toggle_migrate_safely() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            br#"{"schema_version":1,"overlay":{"preset":"default","character_location":false,"zone_transition":true,"x_percent":2.4,"y_percent":18.0,"scale":1.2,"opacity":0.8,"transition_seconds":6.0,"party_card_scale":0.85,"background_opacity":0.77,"show_world_icon":false,"show_school_icon":true}}"#,
+        )
+        .unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.overlay.preset, OverlayPreset::Modern);
+        assert_eq!(loaded.overlay.x_percent, 2.4);
+        assert_eq!(loaded.overlay.y_percent, 18.0);
+        assert_eq!(loaded.overlay.scale, 1.2);
+        assert_eq!(loaded.overlay.transition_seconds, 6.0);
+        assert!(!loaded.overlay.show_world_icon);
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(persisted["overlay"]["preset"], "modern");
+        assert_eq!(persisted["overlay"]["background_opacity"], 0.77);
+        assert!(persisted["overlay"].get("character_location").is_none());
     }
 
     #[test]

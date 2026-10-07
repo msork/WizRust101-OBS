@@ -858,7 +858,7 @@ impl SettingsApp {
                             .selected_text(overlay_preset_name(o.preset))
                             .show_ui(ui, |ui| {
                                 for preset in [
-                                    OverlayPreset::Default,
+                                    OverlayPreset::Modern,
                                     OverlayPreset::Compact,
                                     OverlayPreset::Minimal,
                                 ] {
@@ -869,7 +869,7 @@ impl SettingsApp {
                                     );
                                 }
                             });
-                        if brass_button(ui, "Reset").clicked() {
+                        if brass_button(ui, "Reset to Default Settings").clicked() {
                             o.reset_to_preset();
                         }
                     });
@@ -895,19 +895,13 @@ impl SettingsApp {
                     section(ui, "CARD DETAILS", "Choose what appears in each card.");
                     setting_toggle(
                         ui,
-                        "Character and location",
-                        &mut o.character_location,
-                        "Show your chosen wizard and current location.",
-                    );
-                    setting_toggle(
-                        ui,
                         "Zone transition",
                         &mut o.zone_transition,
                         "Reveal a new location when the game changes zones.",
                     );
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut o.show_world_icon, "World icon");
                         ui.checkbox(&mut o.show_school_icon, "School icon");
+                        ui.checkbox(&mut o.show_world_icon, "World icon");
                     });
                 });
                 ui.add_space(7.0);
@@ -1495,7 +1489,7 @@ fn activate_selected_profile(config: &mut AppConfig, profile_id: &str) -> bool {
 
 fn overlay_preset_name(preset: OverlayPreset) -> &'static str {
     match preset {
-        OverlayPreset::Default => "Default",
+        OverlayPreset::Modern => "Modern",
         OverlayPreset::Compact => "Compact",
         OverlayPreset::Minimal => "Minimal",
     }
@@ -1511,11 +1505,7 @@ fn overlay_preview(
     let size = egui::vec2(width, 230.0);
     let (canvas, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter().with_clip_rect(canvas);
-    painter.rect_filled(
-        canvas,
-        egui::CornerRadius::same(7),
-        Color32::from_rgb(18, 20, 27),
-    );
+    painter.rect_filled(canvas, egui::CornerRadius::same(7), colors.paper);
     painter.rect_stroke(
         canvas,
         egui::CornerRadius::same(7),
@@ -1527,12 +1517,12 @@ fn overlay_preview(
         egui::Align2::LEFT_CENTER,
         "BROWSER SOURCE  ·  16:9 CANVAS",
         egui::FontId::proportional(9.0),
-        Color32::from_rgb(177, 157, 122),
+        colors.subtitle,
     );
 
     let (base_width, base_height, world_size, name_size, location_size, party_width, party_height) =
         match overlay.preset {
-            OverlayPreset::Default => (238.0, 73.0, 31.0, 15.0, 12.0, 220.0, 34.0),
+            OverlayPreset::Modern => (238.0, 73.0, 31.0, 15.0, 12.0, 220.0, 34.0),
             OverlayPreset::Compact => (258.0, 44.0, 22.0, 12.0, 10.0, 218.0, 40.0),
             OverlayPreset::Minimal => (218.0, 24.0, 13.0, 9.0, 8.0, 218.0, 24.0),
         };
@@ -1550,9 +1540,9 @@ fn overlay_preview(
     );
     let owner_rect = egui::Rect::from_min_size(owner_pos, owner_size);
     let alpha = (overlay.background_opacity * overlay.opacity).clamp(0.0, 1.0);
-    if overlay.character_location {
+    {
         match overlay.preset {
-            OverlayPreset::Default => {
+            OverlayPreset::Modern => {
                 painter.rect_filled(
                     owner_rect,
                     egui::CornerRadius::same(9),
@@ -1727,7 +1717,7 @@ fn overlay_preview(
             let party_alpha =
                 (overlay.background_opacity * overlay.opacity * 232.0).clamp(0.0, 255.0) as u8;
             let (rounding, border, card_color) = match overlay.preset {
-                OverlayPreset::Default => (
+                OverlayPreset::Modern => (
                     egui::CornerRadius::same(5),
                     true,
                     Color32::from_rgba_unmultiplied(39, 33, 40, party_alpha),
@@ -1849,7 +1839,7 @@ fn overlay_preview(
                 }
             }
             party_y = rect.bottom()
-                + if overlay.preset == OverlayPreset::Default {
+                + if overlay.preset == OverlayPreset::Modern {
                     4.0
                 } else {
                     2.0
@@ -2410,6 +2400,28 @@ mod icon_tests {
             mock > canvas,
             "Mock Location belongs below the canvas editor"
         );
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        let details = production
+            .split("section(ui, \"CARD DETAILS\"")
+            .nth(1)
+            .unwrap()
+            .split("PLACEMENT AND FINISH")
+            .next()
+            .unwrap();
+        let school = details.find("\"School icon\"").unwrap();
+        let world = details.find("\"World icon\"").unwrap();
+        assert!(school < world);
+        assert!(!details.contains("Character and location"));
+        assert!(source.contains("Reset to Default Settings"));
+    }
+
+    #[test]
+    fn live_preview_uses_native_theme_surface_and_edge_colors() {
+        let source = include_str!("ui.rs");
+        let preview = source.split("fn overlay_preview(").nth(1).unwrap();
+        assert!(preview.contains("colors.paper"));
+        assert!(preview.contains("Stroke::new(1.0_f32, colors.edge)"));
+        assert!(!preview.contains("Color32::from_rgb(18, 20, 27)"));
     }
 
     #[test]

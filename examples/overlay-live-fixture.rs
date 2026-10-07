@@ -48,7 +48,7 @@ async fn set_preset(
     State(shared): State<SharedState>,
 ) -> Result<Json<Value>, StatusCode> {
     let preset = match preset.as_str() {
-        "default" => OverlayPreset::Default,
+        "default" | "modern" => OverlayPreset::Modern,
         "compact" => OverlayPreset::Compact,
         "minimal" => OverlayPreset::Minimal,
         _ => return Err(StatusCode::BAD_REQUEST),

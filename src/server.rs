@@ -524,7 +524,7 @@ mod tests {
         let html = include_str!("../static/overlay.html");
         let css = include_str!("../static/style.css");
         for option in [
-            "options.preset || 'default'",
+            "options.preset || 'modern'",
             "options.party_card_scale ?? 1",
             "options.background_opacity ?? 1",
             "options.show_world_icon === false",
@@ -533,6 +533,7 @@ mod tests {
         ] {
             assert!(html.contains(option), "overlay must consume {option}");
         }
+        assert!(html.contains("options.preset === 'default' ? 'modern'"));
         for preset in ["compact", "minimal"] {
             assert!(css.contains(&format!("data-overlay-preset=\"{preset}\"")));
         }
