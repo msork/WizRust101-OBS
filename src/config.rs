@@ -142,10 +142,10 @@ impl OverlayConfig {
         match preset {
             OverlayPreset::Default => {}
             OverlayPreset::Compact => {
-                overlay.background_opacity = 0.9;
+                overlay.background_opacity = 0.72;
             }
             OverlayPreset::Minimal => {
-                overlay.background_opacity = 0.72;
+                overlay.background_opacity = 0.62;
             }
         }
         overlay

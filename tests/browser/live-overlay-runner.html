@@ -99,12 +99,33 @@
               throw new Error(`preset ${preset} changed scale instead of applying its card design`);
             }
             if (preset === 'compact') {
-              if (after.owner.display !== 'grid' || after.partyCard?.display !== 'grid') throw new Error('Compact did not apply its denser grid card design');
+              if (after.owner.display !== 'flex' || after.partyCard?.display !== 'grid') throw new Error('Compact did not preserve its compact plaque and one-row party design');
               if (after.owner.height >= defaultDesign.ownerHeight || after.partyCard.height >= defaultDesign.partyCardHeight) throw new Error('Compact cards were not physically denser than Default');
             }
             if (preset === 'minimal') {
-              if (after.owner.display !== 'flex' || after.partyCard?.display !== 'flex') throw new Error('Minimal did not apply its minimal row card design');
-              if (after.owner.height >= defaultDesign.ownerHeight || after.partyCard.height >= defaultDesign.partyCardHeight) throw new Error('Minimal cards were not physically smaller than Default');
+              if (after.owner.display !== 'grid' || after.partyCard?.display !== 'grid') throw new Error('Minimal did not apply the shared one-line row design');
+              if (after.owner.width !== after.partyCard.width || after.owner.height !== after.partyCard.height || after.owner.padding !== after.partyCard.padding || after.owner.borderLeftWidth !== after.partyCard.borderLeftWidth || after.owner.borderRadius !== after.partyCard.borderRadius || after.owner.backgroundColor !== after.partyCard.backgroundColor || after.owner.nameFontSize !== after.partyCard.nameFontSize) {
+                throw new Error(`Minimal owner and party rows do not match: ${JSON.stringify({ owner: after.owner, party: after.partyCard })}`);
+              }
+              for (const selector of ['#primary-school', '#world-name']) {
+                if (getComputedStyle(target.document.querySelector(selector)).display !== 'none') throw new Error(`${selector} should be omitted in Minimal`);
+              }
+              if (getComputedStyle(target.document.querySelector('.party-marker')).display !== 'none') throw new Error('Minimal party rows should omit their separate presence banner');
+            }
+            if (preset !== 'default') {
+              const overlaps = (left, right) => left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
+              const ownerSchoolIcon = target.document.querySelector('#primary-school-icon').getBoundingClientRect();
+              const ownerName = target.document.querySelector('#primary-name').getBoundingClientRect();
+              const ownerWorldIcon = target.document.querySelector('#primary-world-icon').getBoundingClientRect();
+              const ownerZone = target.document.querySelector('#zone-name').getBoundingClientRect();
+              if (overlaps(ownerSchoolIcon, ownerName) || overlaps(ownerWorldIcon, ownerZone)) throw new Error(`${preset} owner icons overlap text`);
+              for (const card of target.document.querySelectorAll('.party-card')) {
+                const schoolIcon = card.querySelector('.party-school-icon').getBoundingClientRect();
+                const name = card.querySelector('.party-name').getBoundingClientRect();
+                const worldIcon = card.querySelector('.party-world-icon').getBoundingClientRect();
+                const zone = card.querySelector('.party-location > span').getBoundingClientRect();
+                if (overlaps(schoolIcon, name) || overlaps(worldIcon, zone)) throw new Error(`${preset} party icon overlaps its label`);
+              }
             }
             captures.push({ preset, owner: { x: after.owner.x, y: after.owner.y, width: after.owner.width, height: after.owner.height, display: after.owner.display }, partyCard: after.partyCard, ownerTransform: after.owner.transform, partyTransform: after.party.transform, configured: after.configured });
             previous = { ...after, rosterSize: 3 };

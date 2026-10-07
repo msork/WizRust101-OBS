@@ -536,16 +536,14 @@ mod tests {
         for preset in ["compact", "minimal"] {
             assert!(css.contains(&format!("data-overlay-preset=\"{preset}\"")));
         }
-        assert!(css.contains("grid-template-columns: 30px minmax(0, 1fr);"));
+        assert!(css.contains("Compact retains the former Minimal plaque"));
+        assert!(css.contains("data-overlay-preset=\"compact\"] .primary {\n  display: flex;"));
+        assert!(css.contains("data-overlay-preset=\"compact\"] .party-card {\n  display: grid;"));
         assert!(
-            css.contains(
-                "data-overlay-preset=\"compact\"] .party-card {\n  grid-template-columns:"
-            )
+            css.contains("Minimal gives the owner and every party member the same one-line grid.")
         );
-        assert!(css.contains("data-overlay-preset=\"minimal\"] .party-card {\n  display: flex;"));
-        assert!(
-            css.contains("data-overlay-preset=\"minimal\"] .primary {\n  width: min(258px, 90vw);")
-        );
+        assert!(css.contains("grid-template-columns: 13px minmax(0, 1fr) 13px minmax(0, 1.15fr);"));
+        assert!(html.contains("preset === 'minimal' ? 1 : partyCardScale"));
         assert!(html.contains("renderParty(state.party || [], options)"));
     }
 

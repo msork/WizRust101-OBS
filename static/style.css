@@ -144,6 +144,96 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 :root[data-overlay-preset="minimal"] .party-name { font-size: clamp(9px, .49vw, 11px); }
 :root[data-overlay-preset="minimal"] .party-location { justify-content: flex-end; gap: 3px; min-height: 0; font-size: clamp(8px, .44vw, 10px); }
 :root[data-overlay-preset="minimal"] .party-location > span { max-width: 104px; }
+
+/* Compact retains the former Minimal plaque and one-row Party treatment. */
+:root[data-overlay-preset="compact"] .primary {
+  display: flex;
+  width: min(258px, 90vw);
+  min-height: 0;
+  gap: 7px;
+  padding: 5px 8px 5px 6px;
+  background: rgba(18,17,23,var(--primary-bg-strong,.698));
+  border: 0;
+  border-left: 2px solid var(--school-primary, #d6b86e);
+  border-radius: 2px;
+  box-shadow: 0 1px 4px #0008;
+}
+:root[data-overlay-preset="compact"] .world-icon { width: 22px; height: 22px; filter: none; }
+:root[data-overlay-preset="compact"] .school-icon { width: 15px; height: 15px; filter: none; }
+:root[data-overlay-preset="compact"] .identity { gap: 3px; font-size: clamp(12px, .68vw, 14px); text-shadow: 0 1px 2px #000; }
+:root[data-overlay-preset="compact"] .primary-school { font-size: .68em; }
+:root[data-overlay-preset="compact"] .primary-location { flex-direction: row; align-items: baseline; gap: 4px; min-height: 0; margin-top: 1px; }
+:root[data-overlay-preset="compact"] .world-name { font-size: clamp(8px, .46vw, 10px); letter-spacing: .03em; }
+:root[data-overlay-preset="compact"] .world-name:not(.hidden) ~ .zone-name:not(.hidden)::before { content: "Â·"; margin-right: 4px; }
+:root[data-overlay-preset="compact"] .zone-name { font-size: clamp(10px, .56vw, 12px); }
+:root[data-overlay-preset="compact"] .party-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  grid-template-rows: auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 3px 6px;
+  background: rgba(18,17,23,var(--party-bg-strong,.655));
+  border: 0;
+  border-left: 2px solid var(--school-primary, #ad9256);
+  border-radius: 4px;
+  box-shadow: none;
+}
+:root[data-overlay-preset="compact"] .party { gap: 2px; width: min(218px, 84vw); }
+:root[data-overlay-preset="compact"] .party-marker { display: none; }
+:root[data-overlay-preset="compact"] .party-identity { grid-column: auto; grid-row: auto; gap: 3px; min-width: 0; }
+:root[data-overlay-preset="compact"] .party-school-icon,
+:root[data-overlay-preset="compact"] .party-world-icon { width: 13px; height: 13px; filter: none; }
+:root[data-overlay-preset="compact"] .party-name { font-size: clamp(9px, .49vw, 11px); min-width: 0; }
+:root[data-overlay-preset="compact"] .party-location { grid-column: auto; grid-row: auto; justify-content: flex-start; gap: 4px; min-height: 0; min-width: 0; font-size: clamp(8px, .44vw, 10px); }
+:root[data-overlay-preset="compact"] .party-location > span { min-width: 0; max-width: 78px; }
+
+/* Minimal gives the owner and every party member the same one-line grid. */
+:root[data-overlay-preset="minimal"] .primary,
+:root[data-overlay-preset="minimal"] .party-card {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr) 13px minmax(0, 1.15fr);
+  grid-template-rows: 24px;
+  align-items: center;
+  gap: 4px;
+  width: min(218px, 84vw);
+  height: 24px;
+  min-height: 24px;
+  padding: 3px 6px;
+  overflow: hidden;
+  background: rgba(18,17,23,var(--minimal-card-bg,.564));
+  border: 0;
+  border-left: 2px solid var(--school-primary, #ad9256);
+  border-radius: 2px;
+  clip-path: none;
+  box-shadow: none;
+}
+:root[data-overlay-preset="minimal"] .primary::before { display: none; }
+:root[data-overlay-preset="minimal"] .primary-copy,
+:root[data-overlay-preset="minimal"] .identity,
+:root[data-overlay-preset="minimal"] .primary-location,
+:root[data-overlay-preset="minimal"] .party-identity,
+:root[data-overlay-preset="minimal"] .party-location { display: contents; }
+:root[data-overlay-preset="minimal"] .eyebrow,
+:root[data-overlay-preset="minimal"] .party-marker,
+:root[data-overlay-preset="minimal"] .primary-school,
+:root[data-overlay-preset="minimal"] .world-name { display: none !important; }
+:root[data-overlay-preset="minimal"] .primary-world-icon,
+:root[data-overlay-preset="minimal"] .party-world-icon { grid-column: 3; grid-row: 1; width: 13px; height: 13px; filter: none; }
+:root[data-overlay-preset="minimal"] .primary-school-icon,
+:root[data-overlay-preset="minimal"] .party-school-icon { grid-column: 1; grid-row: 1; width: 13px; height: 13px; filter: none; }
+:root[data-overlay-preset="minimal"] #primary-name,
+:root[data-overlay-preset="minimal"] .party-name { grid-column: 2; grid-row: 1; min-width: 0; overflow: hidden; color: #eee2c7; font-size: clamp(9px, .49vw, 11px); font-weight: 600; line-height: 1; text-overflow: ellipsis; text-shadow: none; white-space: nowrap; }
+:root[data-overlay-preset="minimal"] #zone-name,
+:root[data-overlay-preset="minimal"] .party-location > span { grid-column: 4; grid-row: 1; min-width: 0; max-width: none; overflow: hidden; color: #d5c8ae; font-size: clamp(8px, .44vw, 10px); line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-overlay-preset="minimal"] .primary.hide-school-icon #primary-name,
+:root[data-overlay-preset="minimal"] .party-card.hide-school-icon .party-name { grid-column: 1 / 3; }
+:root[data-overlay-preset="minimal"] .primary.hide-world-icon #zone-name,
+:root[data-overlay-preset="minimal"] .party-card.hide-world-icon .party-location > span { grid-column: 3 / 5; }
+:root[data-overlay-preset="minimal"] .primary-school,
+:root[data-overlay-preset="minimal"] .world-name { display: none !important; }
+:root[data-overlay-preset="minimal"] .party { gap: 2px; width: min(218px, 84vw); }
 .arrival {
   position: fixed;
   left: 50vw;

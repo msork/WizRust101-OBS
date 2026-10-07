@@ -50,9 +50,9 @@
           phase,
           revision: state.revision,
           rosterSize: (state.party || []).length,
-          owner: { x: ownerRect.x, y: ownerRect.y, width: ownerRect.width, height: ownerRect.height, top: style.top, left: style.left, transform: style.transform, inlineTop: owner.style.top, inlineLeft: owner.style.left, inlinePosition: owner.style.position, display: style.display, padding: style.padding, borderLeftWidth: style.borderLeftWidth },
+          owner: { x: ownerRect.x, y: ownerRect.y, width: ownerRect.width, height: ownerRect.height, top: style.top, left: style.left, transform: style.transform, inlineTop: owner.style.top, inlineLeft: owner.style.left, inlinePosition: owner.style.position, display: style.display, padding: style.padding, borderLeftWidth: style.borderLeftWidth, borderRadius: style.borderRadius, backgroundColor: style.backgroundColor, nameFontSize: getComputedStyle($('primary-name')).fontSize },
           party: { x: partyRect.x, y: partyRect.y, top: getComputedStyle(party).top, transform: getComputedStyle(party).transform, height: partyRect.height },
-          partyCard: (() => { const card = party.querySelector('.party-card'); if (!card) return null; const cardStyle = getComputedStyle(card); const cardRect = card.getBoundingClientRect(); return { display: cardStyle.display, height: cardRect.height, padding: cardStyle.padding, clipPath: cardStyle.clipPath }; })(),
+          partyCard: (() => { const card = party.querySelector('.party-card'); if (!card) return null; const cardStyle = getComputedStyle(card); const cardRect = card.getBoundingClientRect(); return { display: cardStyle.display, width: cardRect.width, height: cardRect.height, padding: cardStyle.padding, clipPath: cardStyle.clipPath, borderLeftWidth: cardStyle.borderLeftWidth, borderRadius: cardStyle.borderRadius, backgroundColor: cardStyle.backgroundColor, nameFontSize: getComputedStyle(card.querySelector('.party-name')).fontSize }; })(),
           viewport: { width: window.innerWidth, height: window.innerHeight },
           configured: { xPercent: state.overlay.x_percent, yPercent: state.overlay.y_percent },
           measuredOwnerHeight: ownerRect.height,
@@ -171,6 +171,8 @@
           entry.school.classList.toggle('hidden', options.show_school_icon === false);
           setWorldIcon(entry.world, wizard.world_icon);
           entry.world.classList.toggle('hidden', options.show_world_icon === false);
+          entry.card.classList.toggle('hide-school-icon', options.show_school_icon === false);
+          entry.card.classList.toggle('hide-world-icon', options.show_world_icon === false);
           entry.zone.textContent = visible(wizard.zone);
           entry.zone.classList.toggle('hidden', !visible(wizard.zone));
           const atPosition = party.children[index];
@@ -195,6 +197,7 @@
         document.documentElement.style.setProperty('--primary-bg-mid', (0.95 * backgroundOpacity).toFixed(3));
         document.documentElement.style.setProperty('--party-bg-strong', (0.91 * backgroundOpacity).toFixed(3));
         document.documentElement.style.setProperty('--party-bg-mid', (0.88 * backgroundOpacity).toFixed(3));
+        document.documentElement.style.setProperty('--minimal-card-bg', (0.91 * backgroundOpacity).toFixed(3));
         document.documentElement.dataset.overlayPreset = preset;
         const primary = $('primary');
         primary.style.position = 'fixed';
@@ -202,9 +205,11 @@
         primary.style.top = `${y}%`;
         primary.style.transform = `scale(${scale})`;
         primary.style.opacity = opacity;
-        $('party').style.transform = `scale(${scale * partyCardScale})`;
+        $('party').style.transform = `scale(${scale * (preset === 'minimal' ? 1 : partyCardScale)})`;
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
         primary.classList.toggle('hidden', options.character_location === false);
+        primary.classList.toggle('hide-world-icon', options.show_world_icon === false);
+        primary.classList.toggle('hide-school-icon', options.show_school_icon === false);
         $('primary-world-icon').classList.toggle('hidden', options.show_world_icon === false);
         $('primary-school-icon').classList.toggle('hidden', options.show_school_icon === false);
         $('arrival-icon').classList.toggle('hidden', options.show_world_icon === false);
@@ -215,6 +220,7 @@
           setSchoolIcon($('primary-school-icon'), state.wizard.school);
           $('identity').className = `identity ${schoolClass(state.wizard.school)}`;
           applySchoolPalette($('identity'), state.wizard.school);
+          applySchoolPalette(primary, state.wizard.school);
         } else {
           $('primary-name').textContent = 'Choose a character in Settings';
           $('primary-school').textContent = '';

@@ -33,6 +33,7 @@ const SETTINGS_WINDOW_MIN_SIZE: [f32; 2] = [
     2.0 * STREAM_CANVAS_MIN_COLUMN_WIDTH + STREAM_CANVAS_HORIZONTAL_OVERHEAD,
     600.0,
 ];
+const SETTINGS_SCROLL_BOTTOM_PADDING: f32 = 72.0;
 
 #[derive(Clone, Copy)]
 struct Palette {
@@ -932,10 +933,19 @@ impl SettingsApp {
                         ui.label("Opacity");
                         ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
                     });
-                    ui.horizontal(|ui| {
-                        ui.label("Party card scale");
-                        ui.add(egui::Slider::new(&mut o.party_card_scale, 0.4..=1.5));
+                    ui.add_enabled_ui(o.preset != OverlayPreset::Minimal, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Party card scale");
+                            ui.add(egui::Slider::new(&mut o.party_card_scale, 0.4..=1.5));
+                        });
                     });
+                    if o.preset == OverlayPreset::Minimal {
+                        ui.label(
+                            RichText::new("Minimal keeps owner and party rows the same size.")
+                                .small()
+                                .color(colors.subtitle),
+                        );
+                    }
                     ui.horizontal(|ui| {
                         ui.label("Card background");
                         ui.add(egui::Slider::new(&mut o.background_opacity, 0.0..=1.0));
@@ -1382,10 +1392,13 @@ impl eframe::App for SettingsApp {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match self.tab {
-                        Tab::Overlay => self.overlay_ui(ui),
-                        Tab::Wizard => self.wizard_ui(ui),
-                        Tab::Party => self.party_ui(ui),
+                    .show(ui, |ui| {
+                        match self.tab {
+                            Tab::Overlay => self.overlay_ui(ui),
+                            Tab::Wizard => self.wizard_ui(ui),
+                            Tab::Party => self.party_ui(ui),
+                        }
+                        ui.add_space(SETTINGS_SCROLL_BOTTOM_PADDING);
                     });
             });
         egui::TopBottomPanel::bottom("status")
@@ -1512,7 +1525,7 @@ fn overlay_preview(
     painter.text(
         egui::pos2(canvas.left() + 12.0, canvas.top() + 13.0),
         egui::Align2::LEFT_CENTER,
-        "WIZARD CITY  ·  THE COMMONS",
+        "BROWSER SOURCE  ·  16:9 CANVAS",
         egui::FontId::proportional(9.0),
         Color32::from_rgb(177, 157, 122),
     );
@@ -1520,11 +1533,16 @@ fn overlay_preview(
     let (base_width, base_height, world_size, name_size, location_size, party_width, party_height) =
         match overlay.preset {
             OverlayPreset::Default => (238.0, 73.0, 31.0, 15.0, 12.0, 220.0, 34.0),
-            OverlayPreset::Compact => (222.0, 51.0, 25.0, 13.0, 10.0, 207.0, 27.0),
-            OverlayPreset::Minimal => (203.0, 40.0, 20.0, 12.0, 9.0, 190.0, 21.0),
+            OverlayPreset::Compact => (258.0, 44.0, 22.0, 12.0, 10.0, 218.0, 40.0),
+            OverlayPreset::Minimal => (218.0, 24.0, 13.0, 9.0, 8.0, 218.0, 24.0),
         };
     let scale = overlay.scale;
-    let party_scale = overlay.scale * overlay.party_card_scale;
+    let party_scale = overlay.scale
+        * if overlay.preset == OverlayPreset::Minimal {
+            1.0
+        } else {
+            overlay.party_card_scale
+        };
     let owner_size = egui::vec2(base_width * scale, base_height * scale);
     let owner_pos = egui::pos2(
         canvas.left() + canvas.width() * overlay.x_percent / 100.0,
@@ -1556,23 +1574,28 @@ fn overlay_preview(
             OverlayPreset::Compact => {
                 painter.rect_filled(
                     owner_rect,
-                    egui::CornerRadius::ZERO,
-                    Color32::from_rgba_unmultiplied(43, 31, 39, (222.0 * alpha) as u8),
+                    egui::CornerRadius::same(2),
+                    Color32::from_rgba_unmultiplied(18, 17, 23, (247.0 * alpha) as u8),
                 );
                 painter.rect_filled(
                     egui::Rect::from_min_max(
                         owner_rect.min,
-                        egui::pos2(owner_rect.min.x + 3.0, owner_rect.max.y),
+                        egui::pos2(owner_rect.min.x + 2.0, owner_rect.max.y),
                     ),
                     egui::CornerRadius::ZERO,
-                    Color32::from_rgb(214, 184, 110),
+                    Color32::from_rgb(166, 106, 50),
                 );
             }
             OverlayPreset::Minimal => {
                 painter.rect_filled(
                     owner_rect,
                     egui::CornerRadius::same(2),
-                    Color32::from_rgba_unmultiplied(18, 17, 23, (178.0 * alpha) as u8),
+                    Color32::from_rgba_unmultiplied(
+                        18,
+                        17,
+                        23,
+                        (232.0 * overlay.background_opacity * overlay.opacity) as u8,
+                    ),
                 );
                 painter.rect_filled(
                     egui::Rect::from_min_max(
@@ -1584,84 +1607,115 @@ fn overlay_preview(
                 );
             }
         }
-        let icon_center = egui::pos2(
-            owner_rect.left() + 13.0 * scale + world_size * scale / 2.0,
-            owner_rect.center().y,
-        );
-        if overlay.show_world_icon {
-            let radius = world_size * scale / 2.0;
-            painter.circle_filled(icon_center, radius, Color32::from_rgb(51, 38, 47));
-            painter.circle_stroke(
-                icon_center,
-                radius,
-                Stroke::new(1.2_f32, Color32::from_rgb(213, 181, 103)),
+        let owner_text_alpha = (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8;
+        if overlay.preset == OverlayPreset::Minimal {
+            let school_x = owner_rect.left() + 8.0 * scale;
+            let name_x = owner_rect.left()
+                + if overlay.show_school_icon {
+                    25.0 * scale
+                } else {
+                    8.0 * scale
+                };
+            let icon_center = egui::pos2(owner_rect.left() + 113.0 * scale, owner_rect.center().y);
+            let zone_x = owner_rect.left()
+                + if overlay.show_world_icon {
+                    123.0 * scale
+                } else {
+                    106.0 * scale
+                };
+            if overlay.show_school_icon
+                && let Some(icon) = school_icons.get("Balance")
+            {
+                let icon_rect = egui::Rect::from_min_size(
+                    egui::pos2(school_x, owner_rect.center().y - 6.5 * scale),
+                    egui::vec2(13.0 * scale, 13.0 * scale),
+                );
+                painter.image(
+                    icon.id(),
+                    icon_rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    Color32::from_white_alpha(owner_text_alpha),
+                );
+            }
+            painter.text(
+                egui::pos2(name_x, owner_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                "Your Wizard",
+                egui::FontId::proportional(9.0 * scale),
+                Color32::from_rgba_unmultiplied(238, 225, 199, owner_text_alpha),
             );
-            painter.circle_stroke(
-                icon_center,
-                radius * 0.58,
-                Stroke::new(1.0_f32, Color32::from_rgb(126, 164, 205)),
+            if overlay.show_world_icon {
+                paint_preview_world_icon(&painter, icon_center, 6.5 * scale, owner_text_alpha);
+            }
+            painter.text(
+                egui::pos2(zone_x, owner_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                "The Commons",
+                egui::FontId::proportional(8.0 * scale),
+                Color32::from_rgba_unmultiplied(213, 200, 174, owner_text_alpha),
             );
-            painter.line_segment(
-                [
-                    icon_center - egui::vec2(radius * 0.5, 0.0),
-                    icon_center + egui::vec2(radius * 0.5, 0.0),
-                ],
-                Stroke::new(1.0_f32, Color32::from_rgb(213, 181, 103)),
-            );
-        }
-        let copy_x = owner_rect.left()
-            + (if overlay.show_world_icon {
-                world_size + 24.0
+        } else {
+            let icon_inset = if overlay.preset == OverlayPreset::Compact {
+                8.0
             } else {
-                10.0
-            }) * scale;
-        let identity_y = owner_rect.top() + owner_rect.height() * 0.37;
-        if overlay.show_school_icon
-            && let Some(icon) = school_icons.get("Balance")
-        {
-            let icon_side = 15.0 * scale;
-            let icon_rect = egui::Rect::from_min_size(
-                egui::pos2(copy_x, identity_y - icon_side / 2.0),
-                egui::vec2(icon_side, icon_side),
-            );
-            painter.image(
-                icon.id(),
-                icon_rect,
-                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                Color32::from_white_alpha((255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8),
-            );
-        }
-        let name_x = copy_x
-            + if overlay.show_school_icon {
-                19.0 * scale
-            } else {
-                0.0
+                13.0
             };
-        painter.text(
-            egui::pos2(name_x, identity_y),
-            egui::Align2::LEFT_CENTER,
-            "Your Wizard  ·  Balance",
-            egui::FontId::proportional(name_size * scale),
-            Color32::from_rgba_unmultiplied(
-                241,
-                216,
-                157,
-                (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
-            ),
-        );
-        let location_y = owner_rect.top() + owner_rect.height() * 0.72;
-        painter.text(
-            egui::pos2(copy_x, location_y),
-            egui::Align2::LEFT_CENTER,
-            "WIZARD CITY  ·  The Commons",
-            egui::FontId::proportional(location_size * scale),
-            Color32::from_rgba_unmultiplied(
-                233,
-                220,
-                194,
-                (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
-            ),
-        );
+            let icon_center = egui::pos2(
+                owner_rect.left() + icon_inset * scale + world_size * scale / 2.0,
+                owner_rect.center().y,
+            );
+            if overlay.show_world_icon {
+                paint_preview_world_icon(
+                    &painter,
+                    icon_center,
+                    world_size * scale / 2.0,
+                    owner_text_alpha,
+                );
+            }
+            let copy_x = owner_rect.left()
+                + (if overlay.show_world_icon {
+                    world_size + 24.0
+                } else {
+                    10.0
+                }) * scale;
+            let identity_y = owner_rect.top() + owner_rect.height() * 0.37;
+            if overlay.show_school_icon
+                && let Some(icon) = school_icons.get("Balance")
+            {
+                let icon_side = 15.0 * scale;
+                let icon_rect = egui::Rect::from_min_size(
+                    egui::pos2(copy_x, identity_y - icon_side / 2.0),
+                    egui::vec2(icon_side, icon_side),
+                );
+                painter.image(
+                    icon.id(),
+                    icon_rect,
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                    Color32::from_white_alpha(owner_text_alpha),
+                );
+            }
+            let name_x = copy_x
+                + if overlay.show_school_icon {
+                    19.0 * scale
+                } else {
+                    0.0
+                };
+            painter.text(
+                egui::pos2(name_x, identity_y),
+                egui::Align2::LEFT_CENTER,
+                "Your Wizard  ·  Balance",
+                egui::FontId::proportional(name_size * scale),
+                Color32::from_rgba_unmultiplied(241, 216, 157, owner_text_alpha),
+            );
+            let location_y = owner_rect.top() + owner_rect.height() * 0.72;
+            painter.text(
+                egui::pos2(copy_x, location_y),
+                egui::Align2::LEFT_CENTER,
+                "WIZARD CITY  ·  The Commons",
+                egui::FontId::proportional(location_size * scale),
+                Color32::from_rgba_unmultiplied(233, 220, 194, owner_text_alpha),
+            );
+        }
 
         let mut party_y = owner_rect.bottom() + 5.0;
         for (name, school_color) in [
@@ -1671,17 +1725,30 @@ fn overlay_preview(
             let size = egui::vec2(party_width * party_scale, party_height * party_scale);
             let rect = egui::Rect::from_min_size(egui::pos2(owner_rect.left(), party_y), size);
             let party_alpha =
-                (overlay.background_opacity * overlay.opacity * 222.0).clamp(0.0, 255.0) as u8;
-            let (rounding, border) = match overlay.preset {
-                OverlayPreset::Default => (egui::CornerRadius::same(5), true),
-                OverlayPreset::Compact => (egui::CornerRadius::ZERO, true),
-                OverlayPreset::Minimal => (egui::CornerRadius::same(2), false),
+                (overlay.background_opacity * overlay.opacity * 232.0).clamp(0.0, 255.0) as u8;
+            let (rounding, border, card_color) = match overlay.preset {
+                OverlayPreset::Default => (
+                    egui::CornerRadius::same(5),
+                    true,
+                    Color32::from_rgba_unmultiplied(39, 33, 40, party_alpha),
+                ),
+                OverlayPreset::Compact => (
+                    egui::CornerRadius::same(4),
+                    false,
+                    Color32::from_rgba_unmultiplied(18, 17, 23, party_alpha),
+                ),
+                OverlayPreset::Minimal => (
+                    egui::CornerRadius::same(2),
+                    false,
+                    Color32::from_rgba_unmultiplied(
+                        18,
+                        17,
+                        23,
+                        (232.0 * overlay.background_opacity * overlay.opacity) as u8,
+                    ),
+                ),
             };
-            painter.rect_filled(
-                rect,
-                rounding,
-                Color32::from_rgba_unmultiplied(39, 33, 40, party_alpha),
-            );
+            painter.rect_filled(rect, rounding, card_color);
             if border {
                 painter.rect_stroke(
                     rect,
@@ -1696,11 +1763,7 @@ fn overlay_preview(
                 school_color,
             );
             let show_party_school = overlay.show_school_icon;
-            let party_icon_size = (if overlay.preset == OverlayPreset::Minimal {
-                11.0
-            } else {
-                13.0
-            }) * party_scale;
+            let party_icon_size = 13.0 * party_scale;
             if show_party_school {
                 let icon_x = rect.left() + 8.0 * party_scale;
                 if let Some(icon) =
@@ -1720,46 +1783,70 @@ fn overlay_preview(
             }
             let party_name_x =
                 rect.left() + (if show_party_school { 25.0 } else { 8.0 }) * party_scale;
-            painter.text(
-                egui::pos2(party_name_x, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                name,
-                egui::FontId::proportional(9.0 * party_scale),
-                Color32::from_rgb(238, 225, 199),
-            );
-            let location_label = if overlay.preset == OverlayPreset::Minimal {
-                "Commons"
+            if overlay.preset == OverlayPreset::Minimal {
+                if overlay.show_world_icon {
+                    paint_preview_world_icon(
+                        &painter,
+                        egui::pos2(rect.left() + 113.0 * party_scale, rect.center().y),
+                        6.5 * party_scale,
+                        (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+                    );
+                }
+                painter.text(
+                    egui::pos2(
+                        rect.left()
+                            + if overlay.show_world_icon {
+                                123.0 * party_scale
+                            } else {
+                                104.0 * party_scale
+                            },
+                        rect.center().y,
+                    ),
+                    egui::Align2::LEFT_CENTER,
+                    "The Commons",
+                    egui::FontId::proportional(8.0 * party_scale),
+                    Color32::from_rgba_unmultiplied(
+                        213,
+                        200,
+                        174,
+                        (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+                    ),
+                );
             } else {
-                "The Commons"
-            };
-            painter.text(
-                egui::pos2(rect.right() - 7.0 * party_scale, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                location_label,
-                egui::FontId::proportional(8.0 * party_scale),
-                Color32::from_rgba_unmultiplied(
-                    206,
-                    193,
-                    170,
-                    (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
-                ),
-            );
-            if overlay.show_world_icon {
-                let estimated_label_width = (if overlay.preset == OverlayPreset::Minimal {
-                    31.0
-                } else {
-                    43.0
-                }) * party_scale;
-                let center = egui::pos2(
-                    rect.right() - (estimated_label_width + 13.0 * party_scale),
-                    rect.center().y,
+                painter.text(
+                    egui::pos2(party_name_x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    name,
+                    egui::FontId::proportional(9.0 * party_scale),
+                    Color32::from_rgb(238, 225, 199),
                 );
-                painter.circle_filled(center, 5.0 * party_scale, Color32::from_rgb(48, 43, 57));
-                painter.circle_stroke(
-                    center,
-                    5.0 * party_scale,
-                    Stroke::new(0.8_f32, Color32::from_rgb(213, 181, 103)),
+                let location_x = rect.left()
+                    + if overlay.show_world_icon {
+                        129.0 * party_scale
+                    } else {
+                        112.0 * party_scale
+                    };
+                painter.text(
+                    egui::pos2(location_x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "The Commons",
+                    egui::FontId::proportional(8.0 * party_scale),
+                    Color32::from_rgba_unmultiplied(
+                        206,
+                        193,
+                        170,
+                        (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+                    ),
                 );
+                if overlay.show_world_icon {
+                    let center = egui::pos2(rect.left() + 118.5 * party_scale, rect.center().y);
+                    paint_preview_world_icon(
+                        &painter,
+                        center,
+                        6.5 * party_scale,
+                        (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+                    );
+                }
             }
             party_y = rect.bottom()
                 + if overlay.preset == OverlayPreset::Default {
@@ -1769,6 +1856,40 @@ fn overlay_preview(
                 };
         }
     }
+}
+
+fn paint_preview_world_icon(painter: &egui::Painter, center: egui::Pos2, radius: f32, alpha: u8) {
+    painter.circle_filled(
+        center,
+        radius,
+        Color32::from_rgba_unmultiplied(51, 38, 47, alpha),
+    );
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new(
+            1.0_f32,
+            Color32::from_rgba_unmultiplied(213, 181, 103, alpha),
+        ),
+    );
+    painter.circle_stroke(
+        center,
+        radius * 0.58,
+        Stroke::new(
+            0.8_f32,
+            Color32::from_rgba_unmultiplied(126, 164, 205, alpha),
+        ),
+    );
+    painter.line_segment(
+        [
+            center - egui::vec2(radius * 0.5, 0.0),
+            center + egui::vec2(radius * 0.5, 0.0),
+        ],
+        Stroke::new(
+            0.8_f32,
+            Color32::from_rgba_unmultiplied(213, 181, 103, alpha),
+        ),
+    );
 }
 
 fn section(ui: &mut egui::Ui, title: &str, subtitle: &str) {
@@ -2298,6 +2419,8 @@ mod icon_tests {
         let source = include_str!("ui.rs");
         assert!(source.contains(".with_min_inner_size(SETTINGS_WINDOW_MIN_SIZE)"));
         assert!(source.contains(".auto_shrink([false, false])"));
+        assert_eq!(super::SETTINGS_SCROLL_BOTTOM_PADDING, 72.0);
+        assert!(source.contains("ui.add_space(SETTINGS_SCROLL_BOTTOM_PADDING)"));
         assert!(source.contains("TopBottomPanel::bottom(\"status\")"));
     }
 
