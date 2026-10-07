@@ -24,6 +24,15 @@ const GOLD: Color32 = Color32::from_rgb(177, 132, 55);
 const RED: Color32 = Color32::from_rgb(119, 48, 53);
 const TRAY_OPEN_LABEL: &str = "Open Settings";
 const TRAY_QUIT_LABEL: &str = "Quit WizRust101-OBS";
+// ViewportBuilder dimensions are logical points, so these remain DPI independent.
+const SETTINGS_WINDOW_DEFAULT_SIZE: [f32; 2] = [1120.0, 660.0];
+const STREAM_CANVAS_MIN_COLUMN_WIDTH: f32 = 440.0;
+// Covers central-panel side margins, the column gap, and spare width for card borders/controls.
+const STREAM_CANVAS_HORIZONTAL_OVERHEAD: f32 = 120.0;
+const SETTINGS_WINDOW_MIN_SIZE: [f32; 2] = [
+    2.0 * STREAM_CANVAS_MIN_COLUMN_WIDTH + STREAM_CANVAS_HORIZONTAL_OVERHEAD,
+    600.0,
+];
 
 #[derive(Clone, Copy)]
 struct Palette {
@@ -266,8 +275,8 @@ pub fn run(
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(window_title(&display_name))
-            .with_inner_size([850.0, 690.0])
-            .with_min_inner_size([700.0, 560.0])
+            .with_inner_size(SETTINGS_WINDOW_DEFAULT_SIZE)
+            .with_min_inner_size(SETTINGS_WINDOW_MIN_SIZE)
             .with_visible(false)
             .with_icon(egui::IconData {
                 rgba: icon_rgba,
@@ -840,7 +849,6 @@ impl SettingsApp {
         let o = &mut draft.overlay;
         ui.columns(2, |columns| {
             columns[0].vertical(|ui| {
-                ui.set_min_width(300.0);
                 Frame::group(ui.style()).show(ui, |ui| {
                     section(ui, "PRESENTATION", "Choose a design for the overlay cards.");
                     ui.horizontal(|ui| {
@@ -909,14 +917,18 @@ impl SettingsApp {
                         "Position the owner card and tune its details.",
                     );
                     ui.horizontal(|ui| {
-                        ui.label("X");
+                        ui.label("X position");
                         ui.add(egui::Slider::new(&mut o.x_percent, 0.0..=100.0).suffix("%"));
-                        ui.label("Y");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Y position");
                         ui.add(egui::Slider::new(&mut o.y_percent, 0.0..=100.0).suffix("%"));
                     });
                     ui.horizontal(|ui| {
                         ui.label("Owner scale");
                         ui.add(egui::Slider::new(&mut o.scale, 0.25..=3.0));
+                    });
+                    ui.horizontal(|ui| {
                         ui.label("Opacity");
                         ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
                     });
@@ -937,7 +949,6 @@ impl SettingsApp {
                 });
             });
             columns[1].vertical(|ui| {
-                ui.set_min_width(300.0);
                 Frame::group(ui.style()).show(ui, |ui| {
                     section(
                         ui,
@@ -1483,7 +1494,7 @@ fn overlay_preview(
     colors: Palette,
     school_icons: &HashMap<String, egui::TextureHandle>,
 ) {
-    let width = ui.available_width().max(260.0);
+    let width = ui.available_width().max(1.0);
     let size = egui::vec2(width, 230.0);
     let (canvas, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let painter = ui.painter().with_clip_rect(canvas);
@@ -2278,6 +2289,16 @@ mod icon_tests {
             mock > canvas,
             "Mock Location belongs below the canvas editor"
         );
+    }
+
+    #[test]
+    fn native_viewport_minimum_fits_both_canvas_columns_in_logical_points() {
+        assert_eq!(super::SETTINGS_WINDOW_DEFAULT_SIZE, [1120.0, 660.0]);
+        assert_eq!(super::SETTINGS_WINDOW_MIN_SIZE, [1000.0, 600.0]);
+        let source = include_str!("ui.rs");
+        assert!(source.contains(".with_min_inner_size(SETTINGS_WINDOW_MIN_SIZE)"));
+        assert!(source.contains(".auto_shrink([false, false])"));
+        assert!(source.contains("TopBottomPanel::bottom(\"status\")"));
     }
 
     #[test]
