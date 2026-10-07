@@ -142,16 +142,10 @@ impl OverlayConfig {
         match preset {
             OverlayPreset::Default => {}
             OverlayPreset::Compact => {
-                overlay.scale = 0.9;
-                overlay.party_card_scale = 0.88;
-                overlay.background_opacity = 0.96;
-                overlay.transition_seconds = 4.0;
+                overlay.background_opacity = 0.9;
             }
             OverlayPreset::Minimal => {
-                overlay.scale = 0.82;
-                overlay.party_card_scale = 0.76;
-                overlay.background_opacity = 0.88;
-                overlay.transition_seconds = 3.0;
+                overlay.background_opacity = 0.72;
             }
         }
         overlay
@@ -346,10 +340,12 @@ mod tests {
         assert_eq!((default.x_percent, default.y_percent), (0.6, 16.0));
         assert_eq!((compact.x_percent, compact.y_percent), (0.6, 16.0));
         assert_eq!((minimal.x_percent, minimal.y_percent), (0.6, 16.0));
-        assert!(compact.scale < default.scale);
-        assert!(compact.party_card_scale < default.party_card_scale);
-        assert!(minimal.scale < compact.scale);
-        assert!(minimal.party_card_scale < compact.party_card_scale);
+        assert_eq!(compact.scale, default.scale);
+        assert_eq!(compact.party_card_scale, default.party_card_scale);
+        assert_eq!(minimal.scale, default.scale);
+        assert_eq!(minimal.party_card_scale, default.party_card_scale);
+        assert!(compact.background_opacity < default.background_opacity);
+        assert!(minimal.background_opacity < compact.background_opacity);
         for preset in [default, compact, minimal] {
             assert!(preset.character_location);
             assert!(preset.zone_transition);

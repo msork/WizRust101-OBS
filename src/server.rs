@@ -536,6 +536,16 @@ mod tests {
         for preset in ["compact", "minimal"] {
             assert!(css.contains(&format!("data-overlay-preset=\"{preset}\"")));
         }
+        assert!(css.contains("grid-template-columns: 30px minmax(0, 1fr);"));
+        assert!(
+            css.contains(
+                "data-overlay-preset=\"compact\"] .party-card {\n  grid-template-columns:"
+            )
+        );
+        assert!(css.contains("data-overlay-preset=\"minimal\"] .party-card {\n  display: flex;"));
+        assert!(
+            css.contains("data-overlay-preset=\"minimal\"] .primary {\n  width: min(258px, 90vw);")
+        );
         assert!(html.contains("renderParty(state.party || [], options)"));
     }
 

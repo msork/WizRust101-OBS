@@ -831,104 +831,153 @@ impl SettingsApp {
         section(
             ui,
             "THE STREAM CANVAS",
-            "Keep the game visible with a compact overlay near the edge.",
+            "Choose a visual style, then tune it beside a live preview.",
         );
-        ui.add_space(8.0);
         let colors = palette(self.draft.ui_theme);
-        let o = &mut self.draft.overlay;
-        let selected_preset = o.preset;
-        ui.horizontal(|ui| {
-            ui.label("Presentation preset");
-            ComboBox::from_id_salt("overlay-preset")
-                .selected_text(overlay_preset_name(o.preset))
-                .show_ui(ui, |ui| {
-                    for preset in [
-                        OverlayPreset::Default,
-                        OverlayPreset::Compact,
-                        OverlayPreset::Minimal,
-                    ] {
-                        ui.selectable_value(&mut o.preset, preset, overlay_preset_name(preset));
+        let selected_preset = self.draft.overlay.preset;
+        let overlay_url = self.overlay_url.clone();
+        let (draft, status, school_icons) = (&mut self.draft, &mut self.status, &self.school_icons);
+        let o = &mut draft.overlay;
+        ui.columns(2, |columns| {
+            columns[0].vertical(|ui| {
+                ui.set_min_width(300.0);
+                Frame::group(ui.style()).show(ui, |ui| {
+                    section(ui, "PRESENTATION", "Choose a design for the overlay cards.");
+                    ui.horizontal(|ui| {
+                        ui.label("Preset");
+                        ComboBox::from_id_salt("overlay-preset")
+                            .selected_text(overlay_preset_name(o.preset))
+                            .show_ui(ui, |ui| {
+                                for preset in [
+                                    OverlayPreset::Default,
+                                    OverlayPreset::Compact,
+                                    OverlayPreset::Minimal,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut o.preset,
+                                        preset,
+                                        overlay_preset_name(preset),
+                                    );
+                                }
+                            });
+                        if brass_button(ui, "Reset").clicked() {
+                            o.reset_to_preset();
+                        }
+                    });
+                    if o.preset != selected_preset {
+                        o.reset_to_preset();
                     }
+                    ui.label(
+                        RichText::new(if o.differs_from_preset() {
+                            format!("Customized from {}", overlay_preset_name(o.preset))
+                        } else {
+                            format!("Using {}", overlay_preset_name(o.preset))
+                        })
+                        .small()
+                        .color(if o.differs_from_preset() {
+                            colors.accent
+                        } else {
+                            colors.subtitle
+                        }),
+                    );
                 });
-            if brass_button(ui, "Reset to preset").clicked() {
-                o.reset_to_preset();
-            }
+                ui.add_space(7.0);
+                Frame::group(ui.style()).show(ui, |ui| {
+                    section(ui, "CARD DETAILS", "Choose what appears in each card.");
+                    setting_toggle(
+                        ui,
+                        "Character and location",
+                        &mut o.character_location,
+                        "Show your chosen wizard and current location.",
+                    );
+                    setting_toggle(
+                        ui,
+                        "Zone transition",
+                        &mut o.zone_transition,
+                        "Reveal a new location when the game changes zones.",
+                    );
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut o.show_world_icon, "World icon");
+                        ui.checkbox(&mut o.show_school_icon, "School icon");
+                    });
+                });
+                ui.add_space(7.0);
+                Frame::group(ui.style()).show(ui, |ui| {
+                    section(
+                        ui,
+                        "PLACEMENT AND FINISH",
+                        "Position the owner card and tune its details.",
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("X");
+                        ui.add(egui::Slider::new(&mut o.x_percent, 0.0..=100.0).suffix("%"));
+                        ui.label("Y");
+                        ui.add(egui::Slider::new(&mut o.y_percent, 0.0..=100.0).suffix("%"));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Owner scale");
+                        ui.add(egui::Slider::new(&mut o.scale, 0.25..=3.0));
+                        ui.label("Opacity");
+                        ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Party card scale");
+                        ui.add(egui::Slider::new(&mut o.party_card_scale, 0.4..=1.5));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Card background");
+                        ui.add(egui::Slider::new(&mut o.background_opacity, 0.0..=1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Transition duration");
+                        ui.add(
+                            egui::Slider::new(&mut o.transition_seconds, 1.0..=20.0).suffix(" sec"),
+                        );
+                    });
+                });
+            });
+            columns[1].vertical(|ui| {
+                ui.set_min_width(300.0);
+                Frame::group(ui.style()).show(ui, |ui| {
+                    section(
+                        ui,
+                        "LIVE PREVIEW",
+                        "Sample wizard and party cards at your current settings.",
+                    );
+                    ui.add_space(7.0);
+                    overlay_preview(ui, o, colors, school_icons);
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Owner position stays fixed as party members join or leave.")
+                            .small()
+                            .color(colors.subtitle),
+                    );
+                });
+                ui.add_space(7.0);
+                Frame::group(ui.style()).show(ui, |ui| {
+                    section(
+                        ui,
+                        "OBS BROWSER SOURCE",
+                        "Use this address in an OBS Browser Source.",
+                    );
+                    ui.horizontal(|ui| {
+                        let url_width = (ui.available_width() - 118.0).max(80.0);
+                        ui.add_sized(
+                            [url_width, 28.0],
+                            egui::Label::new(RichText::new(&overlay_url).monospace()).truncate(),
+                        );
+                        if brass_button(ui, "Copy URL").clicked() {
+                            ui.ctx().copy_text(overlay_url.clone());
+                            *status = "Overlay URL copied".into();
+                        }
+                    });
+                });
+            });
         });
-        if o.preset != selected_preset {
-            o.reset_to_preset();
-        }
-        ui.label(
-            RichText::new(if o.differs_from_preset() {
-                format!(
-                    "Customized from the {} preset",
-                    overlay_preset_name(o.preset)
-                )
-            } else {
-                format!("Using the {} preset", overlay_preset_name(o.preset))
-            })
-            .small()
-            .color(if o.differs_from_preset() {
-                colors.accent
-            } else {
-                colors.subtitle
-            }),
-        );
-        setting_toggle(
-            ui,
-            "Character and location plaque",
-            &mut o.character_location,
-            "Show your chosen wizard with the live world and location.",
-        );
-        setting_toggle(
-            ui,
-            "Zone transition",
-            &mut o.zone_transition,
-            "Briefly reveal a new location when the game changes zones.",
-        );
-        ui.horizontal(|ui| {
-            setting_toggle(
-                ui,
-                "World icon",
-                &mut o.show_world_icon,
-                "Show the resolved world's icon on location cards and reveals.",
-            );
-            setting_toggle(
-                ui,
-                "School icon",
-                &mut o.show_school_icon,
-                "Show school sigils beside wizard names.",
-            );
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.label("X position");
-            ui.add(egui::Slider::new(&mut o.x_percent, 0.0..=100.0).suffix("%"));
-            ui.label("Y position");
-            ui.add(egui::Slider::new(&mut o.y_percent, 0.0..=100.0).suffix("%"));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Scale");
-            ui.add(egui::Slider::new(&mut o.scale, 0.25..=3.0));
-            ui.label("Opacity");
-            ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Zone transition duration");
-            ui.add(egui::Slider::new(&mut o.transition_seconds, 1.0..=20.0).suffix(" sec"));
-        });
-        ui.horizontal(|ui| {
-            ui.label("Party card scale");
-            ui.add(egui::Slider::new(&mut o.party_card_scale, 0.4..=1.5));
-            ui.label("Card background opacity");
-            ui.add(egui::Slider::new(&mut o.background_opacity, 0.0..=1.0));
-        });
+
         if self.demo_mode {
-            ui.add_space(12.0);
-            section(
-                ui,
-                "MOCK LOCATION",
-                "Preview world and location changes without opening Wizard101.",
-            );
+            ui.add_space(8.0);
+            section(ui, "MOCK LOCATION", "SIMULATED GAME STATE");
             ui.horizontal(|ui| {
                 ui.label("World");
                 ui.add(egui::TextEdit::singleline(&mut self.demo_world).desired_width(160.0));
@@ -946,19 +995,6 @@ impl SettingsApp {
                 }
             });
         }
-        ui.add_space(16.0);
-        section(
-            ui,
-            "OBS BROWSER SOURCE",
-            "Add this URL as a Browser Source at your canvas resolution.",
-        );
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&self.overlay_url).monospace());
-            if brass_button(ui, "Copy overlay URL").clicked() {
-                ui.ctx().copy_text(self.overlay_url.clone());
-                self.status = "Overlay URL copied".into();
-            }
-        });
     }
     fn wizard_ui(&mut self, ui: &mut egui::Ui) {
         section(
@@ -1332,10 +1368,14 @@ impl eframe::App for SettingsApp {
                     .fill(palette(self.draft.ui_theme).paper)
                     .inner_margin(egui::Margin::symmetric(25, 18)),
             )
-            .show(ctx, |ui| match self.tab {
-                Tab::Overlay => self.overlay_ui(ui),
-                Tab::Wizard => self.wizard_ui(ui),
-                Tab::Party => self.party_ui(ui),
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.tab {
+                        Tab::Overlay => self.overlay_ui(ui),
+                        Tab::Wizard => self.wizard_ui(ui),
+                        Tab::Party => self.party_ui(ui),
+                    });
             });
         egui::TopBottomPanel::bottom("status")
             .frame(
@@ -1434,6 +1474,289 @@ fn overlay_preset_name(preset: OverlayPreset) -> &'static str {
         OverlayPreset::Default => "Default",
         OverlayPreset::Compact => "Compact",
         OverlayPreset::Minimal => "Minimal",
+    }
+}
+
+fn overlay_preview(
+    ui: &mut egui::Ui,
+    overlay: &crate::config::OverlayConfig,
+    colors: Palette,
+    school_icons: &HashMap<String, egui::TextureHandle>,
+) {
+    let width = ui.available_width().max(260.0);
+    let size = egui::vec2(width, 230.0);
+    let (canvas, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter().with_clip_rect(canvas);
+    painter.rect_filled(
+        canvas,
+        egui::CornerRadius::same(7),
+        Color32::from_rgb(18, 20, 27),
+    );
+    painter.rect_stroke(
+        canvas,
+        egui::CornerRadius::same(7),
+        Stroke::new(1.0_f32, colors.edge),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        egui::pos2(canvas.left() + 12.0, canvas.top() + 13.0),
+        egui::Align2::LEFT_CENTER,
+        "WIZARD CITY  ·  THE COMMONS",
+        egui::FontId::proportional(9.0),
+        Color32::from_rgb(177, 157, 122),
+    );
+
+    let (base_width, base_height, world_size, name_size, location_size, party_width, party_height) =
+        match overlay.preset {
+            OverlayPreset::Default => (238.0, 73.0, 31.0, 15.0, 12.0, 220.0, 34.0),
+            OverlayPreset::Compact => (222.0, 51.0, 25.0, 13.0, 10.0, 207.0, 27.0),
+            OverlayPreset::Minimal => (203.0, 40.0, 20.0, 12.0, 9.0, 190.0, 21.0),
+        };
+    let scale = overlay.scale;
+    let party_scale = overlay.scale * overlay.party_card_scale;
+    let owner_size = egui::vec2(base_width * scale, base_height * scale);
+    let owner_pos = egui::pos2(
+        canvas.left() + canvas.width() * overlay.x_percent / 100.0,
+        canvas.top() + canvas.height() * overlay.y_percent / 100.0,
+    );
+    let owner_rect = egui::Rect::from_min_size(owner_pos, owner_size);
+    let alpha = (overlay.background_opacity * overlay.opacity).clamp(0.0, 1.0);
+    if overlay.character_location {
+        match overlay.preset {
+            OverlayPreset::Default => {
+                painter.rect_filled(
+                    owner_rect,
+                    egui::CornerRadius::same(9),
+                    Color32::from_rgba_unmultiplied(44, 31, 39, (244.0 * alpha) as u8),
+                );
+                painter.rect_stroke(
+                    owner_rect,
+                    egui::CornerRadius::same(9),
+                    Stroke::new(1.0_f32, Color32::from_rgb(214, 184, 110)),
+                    egui::StrokeKind::Inside,
+                );
+                painter.rect_stroke(
+                    owner_rect.shrink(4.0),
+                    egui::CornerRadius::same(6),
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(230, 207, 148, 90)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            OverlayPreset::Compact => {
+                painter.rect_filled(
+                    owner_rect,
+                    egui::CornerRadius::ZERO,
+                    Color32::from_rgba_unmultiplied(43, 31, 39, (222.0 * alpha) as u8),
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        owner_rect.min,
+                        egui::pos2(owner_rect.min.x + 3.0, owner_rect.max.y),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    Color32::from_rgb(214, 184, 110),
+                );
+            }
+            OverlayPreset::Minimal => {
+                painter.rect_filled(
+                    owner_rect,
+                    egui::CornerRadius::same(2),
+                    Color32::from_rgba_unmultiplied(18, 17, 23, (178.0 * alpha) as u8),
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        owner_rect.min,
+                        egui::pos2(owner_rect.min.x + 2.0, owner_rect.max.y),
+                    ),
+                    egui::CornerRadius::ZERO,
+                    Color32::from_rgb(166, 106, 50),
+                );
+            }
+        }
+        let icon_center = egui::pos2(
+            owner_rect.left() + 13.0 * scale + world_size * scale / 2.0,
+            owner_rect.center().y,
+        );
+        if overlay.show_world_icon {
+            let radius = world_size * scale / 2.0;
+            painter.circle_filled(icon_center, radius, Color32::from_rgb(51, 38, 47));
+            painter.circle_stroke(
+                icon_center,
+                radius,
+                Stroke::new(1.2_f32, Color32::from_rgb(213, 181, 103)),
+            );
+            painter.circle_stroke(
+                icon_center,
+                radius * 0.58,
+                Stroke::new(1.0_f32, Color32::from_rgb(126, 164, 205)),
+            );
+            painter.line_segment(
+                [
+                    icon_center - egui::vec2(radius * 0.5, 0.0),
+                    icon_center + egui::vec2(radius * 0.5, 0.0),
+                ],
+                Stroke::new(1.0_f32, Color32::from_rgb(213, 181, 103)),
+            );
+        }
+        let copy_x = owner_rect.left()
+            + (if overlay.show_world_icon {
+                world_size + 24.0
+            } else {
+                10.0
+            }) * scale;
+        let identity_y = owner_rect.top() + owner_rect.height() * 0.37;
+        if overlay.show_school_icon
+            && let Some(icon) = school_icons.get("Balance")
+        {
+            let icon_side = 15.0 * scale;
+            let icon_rect = egui::Rect::from_min_size(
+                egui::pos2(copy_x, identity_y - icon_side / 2.0),
+                egui::vec2(icon_side, icon_side),
+            );
+            painter.image(
+                icon.id(),
+                icon_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                Color32::from_white_alpha((255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8),
+            );
+        }
+        let name_x = copy_x
+            + if overlay.show_school_icon {
+                19.0 * scale
+            } else {
+                0.0
+            };
+        painter.text(
+            egui::pos2(name_x, identity_y),
+            egui::Align2::LEFT_CENTER,
+            "Your Wizard  ·  Balance",
+            egui::FontId::proportional(name_size * scale),
+            Color32::from_rgba_unmultiplied(
+                241,
+                216,
+                157,
+                (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+            ),
+        );
+        let location_y = owner_rect.top() + owner_rect.height() * 0.72;
+        painter.text(
+            egui::pos2(copy_x, location_y),
+            egui::Align2::LEFT_CENTER,
+            "WIZARD CITY  ·  The Commons",
+            egui::FontId::proportional(location_size * scale),
+            Color32::from_rgba_unmultiplied(
+                233,
+                220,
+                194,
+                (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+            ),
+        );
+
+        let mut party_y = owner_rect.bottom() + 5.0;
+        for (name, school_color) in [
+            ("Party Wizard 1", Color32::from_rgb(77, 139, 58)),
+            ("Party Wizard 2", Color32::from_rgb(109, 63, 192)),
+        ] {
+            let size = egui::vec2(party_width * party_scale, party_height * party_scale);
+            let rect = egui::Rect::from_min_size(egui::pos2(owner_rect.left(), party_y), size);
+            let party_alpha =
+                (overlay.background_opacity * overlay.opacity * 222.0).clamp(0.0, 255.0) as u8;
+            let (rounding, border) = match overlay.preset {
+                OverlayPreset::Default => (egui::CornerRadius::same(5), true),
+                OverlayPreset::Compact => (egui::CornerRadius::ZERO, true),
+                OverlayPreset::Minimal => (egui::CornerRadius::same(2), false),
+            };
+            painter.rect_filled(
+                rect,
+                rounding,
+                Color32::from_rgba_unmultiplied(39, 33, 40, party_alpha),
+            );
+            if border {
+                painter.rect_stroke(
+                    rect,
+                    rounding,
+                    Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(196, 164, 99, 175)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            painter.rect_filled(
+                egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + 2.0, rect.max.y)),
+                egui::CornerRadius::ZERO,
+                school_color,
+            );
+            let show_party_school = overlay.show_school_icon;
+            let party_icon_size = (if overlay.preset == OverlayPreset::Minimal {
+                11.0
+            } else {
+                13.0
+            }) * party_scale;
+            if show_party_school {
+                let icon_x = rect.left() + 8.0 * party_scale;
+                if let Some(icon) =
+                    school_icons.get(if name.ends_with('1') { "Life" } else { "Storm" })
+                {
+                    let icon_rect = egui::Rect::from_min_size(
+                        egui::pos2(icon_x, rect.center().y - party_icon_size / 2.0),
+                        egui::vec2(party_icon_size, party_icon_size),
+                    );
+                    painter.image(
+                        icon.id(),
+                        icon_rect,
+                        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                        Color32::from_white_alpha((255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8),
+                    );
+                }
+            }
+            let party_name_x =
+                rect.left() + (if show_party_school { 25.0 } else { 8.0 }) * party_scale;
+            painter.text(
+                egui::pos2(party_name_x, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(9.0 * party_scale),
+                Color32::from_rgb(238, 225, 199),
+            );
+            let location_label = if overlay.preset == OverlayPreset::Minimal {
+                "Commons"
+            } else {
+                "The Commons"
+            };
+            painter.text(
+                egui::pos2(rect.right() - 7.0 * party_scale, rect.center().y),
+                egui::Align2::RIGHT_CENTER,
+                location_label,
+                egui::FontId::proportional(8.0 * party_scale),
+                Color32::from_rgba_unmultiplied(
+                    206,
+                    193,
+                    170,
+                    (255.0 * overlay.opacity.clamp(0.0, 1.0)) as u8,
+                ),
+            );
+            if overlay.show_world_icon {
+                let estimated_label_width = (if overlay.preset == OverlayPreset::Minimal {
+                    31.0
+                } else {
+                    43.0
+                }) * party_scale;
+                let center = egui::pos2(
+                    rect.right() - (estimated_label_width + 13.0 * party_scale),
+                    rect.center().y,
+                );
+                painter.circle_filled(center, 5.0 * party_scale, Color32::from_rgb(48, 43, 57));
+                painter.circle_stroke(
+                    center,
+                    5.0 * party_scale,
+                    Stroke::new(0.8_f32, Color32::from_rgb(213, 181, 103)),
+                );
+            }
+            party_y = rect.bottom()
+                + if overlay.preset == OverlayPreset::Default {
+                    4.0
+                } else {
+                    2.0
+                };
+        }
     }
 }
 
@@ -1941,6 +2264,20 @@ mod icon_tests {
         let source = include_str!("ui.rs");
         assert!(source.contains("include_bytes!(\"../assets/icons/sizes/256.png\")"));
         assert!(source.contains("ui.image((app_icon, egui::vec2(48.0, 48.0)))"));
+    }
+
+    #[test]
+    fn stream_canvas_has_two_column_preview_and_separate_mock_location_section() {
+        let source = include_str!("ui.rs");
+        assert!(source.contains("ui.columns(2, |columns|"));
+        assert!(source.contains("\"LIVE PREVIEW\""));
+        assert!(source.contains("fn overlay_preview("));
+        let mock = source.find("section(ui, \"MOCK LOCATION\"").unwrap();
+        let canvas = source.find("ui.columns(2, |columns|").unwrap();
+        assert!(
+            mock > canvas,
+            "Mock Location belongs below the canvas editor"
+        );
     }
 
     #[test]

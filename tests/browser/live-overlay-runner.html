@@ -65,8 +65,9 @@
               previousPartyHeight = null;
             }
             const geometry = (entry) => ({
-              owner: { x: entry.owner.x, y: entry.owner.y, top: entry.owner.top, left: entry.owner.left, transform: entry.owner.transform, inlineTop: entry.owner.inlineTop, inlineLeft: entry.owner.inlineLeft },
+              owner: { x: entry.owner.x, y: entry.owner.y, width: entry.owner.width, height: entry.owner.height, top: entry.owner.top, left: entry.owner.left, transform: entry.owner.transform, inlineTop: entry.owner.inlineTop, inlineLeft: entry.owner.inlineLeft, display: entry.owner.display, padding: entry.owner.padding, borderLeftWidth: entry.owner.borderLeftWidth },
               party: { x: entry.party.x, y: entry.party.y, height: entry.party.height, transform: entry.party.transform },
+              partyCard: entry.partyCard,
               viewport: entry.viewport,
               configured: entry.configured,
               measuredOwnerHeight: entry.measuredOwnerHeight,
@@ -79,7 +80,8 @@
             previous = { ...after, rosterSize };
           }
 
-          for (const [preset, ownerScale, partyScale] of [['compact', 0.9, 0.88], ['minimal', 0.82, 0.76], ['default', 1, 1]]) {
+          const defaultDesign = { ownerWidth: previous.owner.width, ownerHeight: previous.owner.height, partyCardHeight: previous.partyCard.height };
+          for (const preset of ['compact', 'minimal', 'default']) {
             const oldRevision = target.__overlayLastRenderedRevision;
             const response = await fetch(`/__test/preset/${preset}`, { method: 'POST' });
             if (!response.ok) throw new Error(`fixture rejected preset ${preset}`);
@@ -93,14 +95,18 @@
             if (after.owner.x !== previous.owner.x || after.owner.y !== previous.owner.y) {
               throw new Error(`owner moved when applying ${preset} preset`);
             }
-            if (Math.abs(after.scale - ownerScale) > 0.001 || Math.abs(after.partyCardScale - partyScale) > 0.001) {
-              throw new Error(`preset ${preset} scales were not applied`);
+            if (Math.abs(after.scale - 1) > 0.001 || Math.abs(after.partyCardScale - 1) > 0.001) {
+              throw new Error(`preset ${preset} changed scale instead of applying its card design`);
             }
-            const partyTransformScale = new DOMMatrixReadOnly(after.party.transform).a;
-            if (Math.abs(partyTransformScale - ownerScale * partyScale) > 0.002) {
-              throw new Error(`party-card scale for ${preset} was not applied`);
+            if (preset === 'compact') {
+              if (after.owner.display !== 'grid' || after.partyCard?.display !== 'grid') throw new Error('Compact did not apply its denser grid card design');
+              if (after.owner.height >= defaultDesign.ownerHeight || after.partyCard.height >= defaultDesign.partyCardHeight) throw new Error('Compact cards were not physically denser than Default');
             }
-            captures.push({ preset, owner: { x: after.owner.x, y: after.owner.y }, ownerTransform: after.owner.transform, partyTransform: after.party.transform, configured: after.configured });
+            if (preset === 'minimal') {
+              if (after.owner.display !== 'flex' || after.partyCard?.display !== 'flex') throw new Error('Minimal did not apply its minimal row card design');
+              if (after.owner.height >= defaultDesign.ownerHeight || after.partyCard.height >= defaultDesign.partyCardHeight) throw new Error('Minimal cards were not physically smaller than Default');
+            }
+            captures.push({ preset, owner: { x: after.owner.x, y: after.owner.y, width: after.owner.width, height: after.owner.height, display: after.owner.display }, partyCard: after.partyCard, ownerTransform: after.owner.transform, partyTransform: after.party.transform, configured: after.configured });
             previous = { ...after, rosterSize: 3 };
           }
 
