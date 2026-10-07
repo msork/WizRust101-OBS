@@ -5,7 +5,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .primary {
   position: fixed;
   left: var(--x, .6%);
-  top: var(--y, 27%);
+  top: var(--y, 16%);
   transform: scale(var(--scale, 1));
   transform-origin: 0 0;
   opacity: var(--opacity, 1);
@@ -35,7 +35,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .world-name { overflow: hidden; color: #e6cd91; font-size: clamp(12px, .72vw, 16px); line-height: 1.15; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .zone-name { overflow: hidden; color: #f1e3bf; font-size: clamp(15px, .92vw, 20px); line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
 .primary::before { content: ""; position: absolute; inset: 4px 8px; border: 1px solid rgba(223,190,117,.36); pointer-events: none; }
-.party { position: fixed; left: var(--x, .6%); top: calc(var(--y, 27%) + var(--primary-scaled-height, 112px) + 7px); display: flex; flex-direction: column; gap: 5px; width: clamp(260px, 16vw, 360px); max-height: 270px; overflow: hidden; transform: scale(var(--scale, 1)); transform-origin: 0 0; opacity: var(--opacity, 1); pointer-events: none; }
+.party { position: fixed; left: var(--x, .6%); top: calc(var(--y, 16%) + var(--primary-scaled-height, 112px) + 7px); display: flex; flex-direction: column; gap: 5px; width: clamp(260px, 16vw, 360px); max-height: 270px; overflow: hidden; transform: scale(var(--scale, 1)); transform-origin: 0 0; opacity: var(--opacity, 1); pointer-events: none; }
 .party:empty { display: none; }
 .party-card {
   display: grid;
