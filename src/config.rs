@@ -63,6 +63,7 @@ pub struct CharacterProfile {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct OverlayConfig {
+    pub preset: OverlayPreset,
     pub character_location: bool,
     pub zone_transition: bool,
     pub x_percent: f32,
@@ -70,6 +71,19 @@ pub struct OverlayConfig {
     pub scale: f32,
     pub opacity: f32,
     pub transition_seconds: f32,
+    pub party_card_scale: f32,
+    pub background_opacity: f32,
+    pub show_world_icon: bool,
+    pub show_school_icon: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayPreset {
+    #[default]
+    Default,
+    Compact,
+    Minimal,
 }
 
 impl Default for AppConfig {
@@ -103,6 +117,7 @@ impl Default for CharacterProfile {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self {
+            preset: OverlayPreset::Default,
             character_location: true,
             zone_transition: true,
             x_percent: 0.6,
@@ -110,7 +125,44 @@ impl Default for OverlayConfig {
             scale: 1.0,
             opacity: 1.0,
             transition_seconds: 4.0,
+            party_card_scale: 1.0,
+            background_opacity: 1.0,
+            show_world_icon: true,
+            show_school_icon: true,
         }
+    }
+}
+
+impl OverlayConfig {
+    pub fn for_preset(preset: OverlayPreset) -> Self {
+        let mut overlay = Self {
+            preset,
+            ..Self::default()
+        };
+        match preset {
+            OverlayPreset::Default => {}
+            OverlayPreset::Compact => {
+                overlay.scale = 0.9;
+                overlay.party_card_scale = 0.88;
+                overlay.background_opacity = 0.96;
+                overlay.transition_seconds = 4.0;
+            }
+            OverlayPreset::Minimal => {
+                overlay.scale = 0.82;
+                overlay.party_card_scale = 0.76;
+                overlay.background_opacity = 0.88;
+                overlay.transition_seconds = 3.0;
+            }
+        }
+        overlay
+    }
+
+    pub fn reset_to_preset(&mut self) {
+        *self = Self::for_preset(self.preset);
+    }
+
+    pub fn differs_from_preset(&self) -> bool {
+        self != &Self::for_preset(self.preset)
     }
 }
 
@@ -167,6 +219,8 @@ impl AppConfig {
             || !(0.25..=3.0).contains(&o.scale)
             || !(0.0..=1.0).contains(&o.opacity)
             || !(1.0..=20.0).contains(&o.transition_seconds)
+            || !(0.4..=1.5).contains(&o.party_card_scale)
+            || !(0.0..=1.0).contains(&o.background_opacity)
         {
             return Err("overlay settings are outside supported ranges".into());
         }
@@ -282,6 +336,87 @@ mod tests {
         assert_eq!(overlay.transition_seconds, 4.0);
         assert!(overlay.character_location);
         assert!(overlay.zone_transition);
+    }
+
+    #[test]
+    fn presentation_presets_keep_position_and_toggle_defaults() {
+        let default = OverlayConfig::for_preset(OverlayPreset::Default);
+        let compact = OverlayConfig::for_preset(OverlayPreset::Compact);
+        let minimal = OverlayConfig::for_preset(OverlayPreset::Minimal);
+        assert_eq!((default.x_percent, default.y_percent), (0.6, 16.0));
+        assert_eq!((compact.x_percent, compact.y_percent), (0.6, 16.0));
+        assert_eq!((minimal.x_percent, minimal.y_percent), (0.6, 16.0));
+        assert!(compact.scale < default.scale);
+        assert!(compact.party_card_scale < default.party_card_scale);
+        assert!(minimal.scale < compact.scale);
+        assert!(minimal.party_card_scale < compact.party_card_scale);
+        for preset in [default, compact, minimal] {
+            assert!(preset.character_location);
+            assert!(preset.zone_transition);
+            assert!(preset.show_world_icon);
+            assert!(preset.show_school_icon);
+        }
+    }
+
+    #[test]
+    fn preset_customization_reset_and_serialization_are_overlay_only() {
+        let mut config = AppConfig::default();
+        config.profiles.push(CharacterProfile {
+            id: "wizard-a".into(),
+            name: "Wizard A".into(),
+            school: "Life".into(),
+            ..Default::default()
+        });
+        config.active_profile = Some("wizard-a".into());
+        config.overlay = OverlayConfig::for_preset(OverlayPreset::Compact);
+        assert!(!config.overlay.differs_from_preset());
+
+        config.overlay.party_card_scale = 0.7;
+        config.overlay.show_world_icon = false;
+        assert!(config.overlay.differs_from_preset());
+        let encoded = serde_json::to_vec(&config).unwrap();
+        let mut restored: AppConfig = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(restored.overlay.party_card_scale, 0.7);
+        assert!(!restored.overlay.show_world_icon);
+        assert_eq!(restored.profiles[0].name, "Wizard A");
+        assert_eq!(restored.active_profile.as_deref(), Some("wizard-a"));
+
+        restored.overlay.reset_to_preset();
+        assert_eq!(
+            restored.overlay,
+            OverlayConfig::for_preset(OverlayPreset::Compact)
+        );
+        assert!(!restored.overlay.differs_from_preset());
+        assert_eq!(restored.profiles[0].name, "Wizard A");
+    }
+
+    #[test]
+    fn customized_preset_persists_through_config_file_reload() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut config = AppConfig {
+            overlay: OverlayConfig::for_preset(OverlayPreset::Minimal),
+            ..AppConfig::default()
+        };
+        config.overlay.party_card_scale = 0.68;
+        config.overlay.background_opacity = 0.57;
+        config.overlay.show_world_icon = false;
+        config.overlay.transition_seconds = 6.5;
+        config.save_to_path(&path).unwrap();
+
+        let loaded = AppConfig::load_from_path(&path).unwrap();
+        assert_eq!(loaded.overlay, config.overlay);
+        assert!(loaded.overlay.differs_from_preset());
+    }
+
+    #[test]
+    fn validates_party_card_scale_and_background_opacity() {
+        let mut config = AppConfig::default();
+        config.overlay.party_card_scale = 0.3;
+        assert!(config.validate().is_err());
+        config.overlay.party_card_scale = 0.9;
+        config.overlay.background_opacity = 1.1;
+        assert!(config.validate().is_err());
     }
 
     #[test]

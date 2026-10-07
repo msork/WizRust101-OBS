@@ -379,6 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_stream_sends_initial_and_updated_state() {
+        use crate::config::{OverlayConfig, OverlayPreset};
         use crate::{mapping::ZoneCatalog, parser::GameEvent};
         let shared = SharedState::new(AppConfig::default());
         let app = router(shared.clone());
@@ -394,6 +395,24 @@ mod tests {
         let mut body = response.into_body();
         let first = body.frame().await.unwrap().unwrap().into_data().unwrap();
         assert!(String::from_utf8_lossy(&first).contains("session_seconds"));
+        {
+            let mut config = shared.config.lock().unwrap();
+            config.overlay = OverlayConfig::for_preset(OverlayPreset::Compact);
+            config.overlay.show_world_icon = false;
+            config.overlay.party_card_scale = 0.8;
+        }
+        shared.publish_current();
+        let preset_update = tokio::time::timeout(std::time::Duration::from_secs(1), body.frame())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .into_data()
+            .unwrap();
+        let preset_event = String::from_utf8_lossy(&preset_update);
+        assert!(preset_event.contains("\"preset\":\"compact\""));
+        assert!(preset_event.contains("\"party_card_scale\":0.8"));
+        assert!(preset_event.contains("\"show_world_icon\":false"));
         shared.apply(
             GameEvent::ZoneChanged {
                 raw_zone_id: "Unknown/Zone".into(),
@@ -498,6 +517,26 @@ mod tests {
         );
         assert!(css.contains("transform-origin: 0 0;"));
         assert!(!css.contains("#overlay"));
+    }
+
+    #[test]
+    fn overlay_consumes_persisted_preset_and_presentation_options() {
+        let html = include_str!("../static/overlay.html");
+        let css = include_str!("../static/style.css");
+        for option in [
+            "options.preset || 'default'",
+            "options.party_card_scale ?? 1",
+            "options.background_opacity ?? 1",
+            "options.show_world_icon === false",
+            "options.show_school_icon === false",
+            "options.transition_seconds ?? 4",
+        ] {
+            assert!(html.contains(option), "overlay must consume {option}");
+        }
+        for preset in ["compact", "minimal"] {
+            assert!(css.contains(&format!("data-overlay-preset=\"{preset}\"")));
+        }
+        assert!(html.contains("renderParty(state.party || [], options)"));
     }
 
     #[test]

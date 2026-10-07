@@ -34,7 +34,7 @@
           let previousPartyTop = null;
           let previousPartyHeight = null;
 
-          for (const rosterSize of [0, 1, 2, 3, 0]) {
+          for (const rosterSize of [0, 1, 2, 3]) {
             const oldRevision = target.__overlayLastRenderedRevision;
             const response = await fetch(`/__test/party/${rosterSize}`, { method: 'POST' });
             if (!response.ok) throw new Error(`fixture rejected roster size ${rosterSize}`);
@@ -66,15 +66,79 @@
             }
             const geometry = (entry) => ({
               owner: { x: entry.owner.x, y: entry.owner.y, top: entry.owner.top, left: entry.owner.left, transform: entry.owner.transform, inlineTop: entry.owner.inlineTop, inlineLeft: entry.owner.inlineLeft },
-              party: { x: entry.party.x, y: entry.party.y, height: entry.party.height },
+              party: { x: entry.party.x, y: entry.party.y, height: entry.party.height, transform: entry.party.transform },
               viewport: entry.viewport,
               configured: entry.configured,
               measuredOwnerHeight: entry.measuredOwnerHeight,
               scale: entry.scale,
+              partyCardScale: entry.partyCardScale,
+              backgroundOpacity: entry.backgroundOpacity,
+              preset: entry.preset,
             });
             captures.push({ occupancy: `${rosterSize + 1}/4`, before: geometry(before), after: geometry(after) });
             previous = { ...after, rosterSize };
           }
+
+          for (const [preset, ownerScale, partyScale] of [['compact', 0.9, 0.88], ['minimal', 0.82, 0.76], ['default', 1, 1]]) {
+            const oldRevision = target.__overlayLastRenderedRevision;
+            const response = await fetch(`/__test/preset/${preset}`, { method: 'POST' });
+            if (!response.ok) throw new Error(`fixture rejected preset ${preset}`);
+            const changed = await response.json();
+            await waitFor(() => target.__overlayLastRenderedRevision >= changed.revision, `SSE preset ${preset} was not rendered`);
+            const after = target.__overlayLayoutTrace.find((entry) => entry.revision === changed.revision && entry.phase === 'after-roster');
+            if (!after || changed.revision <= oldRevision) throw new Error(`missing live render for preset ${preset}`);
+            if (target.document.documentElement.dataset.overlayPreset !== preset || after.preset !== preset) {
+              throw new Error(`preset ${preset} did not reach the live page`);
+            }
+            if (after.owner.x !== previous.owner.x || after.owner.y !== previous.owner.y) {
+              throw new Error(`owner moved when applying ${preset} preset`);
+            }
+            if (Math.abs(after.scale - ownerScale) > 0.001 || Math.abs(after.partyCardScale - partyScale) > 0.001) {
+              throw new Error(`preset ${preset} scales were not applied`);
+            }
+            const partyTransformScale = new DOMMatrixReadOnly(after.party.transform).a;
+            if (Math.abs(partyTransformScale - ownerScale * partyScale) > 0.002) {
+              throw new Error(`party-card scale for ${preset} was not applied`);
+            }
+            captures.push({ preset, owner: { x: after.owner.x, y: after.owner.y }, ownerTransform: after.owner.transform, partyTransform: after.party.transform, configured: after.configured });
+            previous = { ...after, rosterSize: 3 };
+          }
+
+          const oldRevision = target.__overlayLastRenderedRevision;
+          const customizedResponse = await fetch('/__test/customize', { method: 'POST' });
+          if (!customizedResponse.ok) throw new Error('fixture rejected presentation customization');
+          const customized = await customizedResponse.json();
+          await waitFor(() => target.__overlayLastRenderedRevision >= customized.revision, 'custom presentation was not delivered over SSE');
+          const customRender = target.__overlayLayoutTrace.find((entry) => entry.revision === customized.revision && entry.phase === 'after-roster');
+          if (!customRender || customized.revision <= oldRevision) throw new Error('missing customized presentation render');
+          const customOwnerScale = new DOMMatrixReadOnly(customRender.owner.transform).a;
+          const customPartyScale = new DOMMatrixReadOnly(customRender.party.transform).a;
+          if (Math.abs(customOwnerScale - 1.1) > 0.002 || Math.abs(customPartyScale - 0.77) > 0.002) {
+            throw new Error('custom owner/Party scales were not applied');
+          }
+          if (customRender.cssVariables.primaryBackground !== '0.485' || customRender.cssVariables.partyBackground !== '0.455') {
+            throw new Error('card background opacity was not applied');
+          }
+          if (customRender.cssVariables.transitionDuration !== '6s') throw new Error('zone transition duration was not applied');
+          for (const selector of ['#primary-world-icon', '#primary-school-icon', '.party-world-icon', '.party-school-icon']) {
+            if (getComputedStyle(target.document.querySelector(selector)).display !== 'none') throw new Error(`${selector} visibility toggle was not applied`);
+          }
+          if (customRender.owner.x !== previous.owner.x || customRender.owner.y !== previous.owner.y) {
+            throw new Error('custom presentation moved the owner anchor');
+          }
+          if (customRender.party.y < customRender.owner.y + customRender.measuredOwnerHeight + 6.9) {
+            throw new Error('customized Party layer is not anchored below owner');
+          }
+          captures.push({ customized: true, ownerScale: customOwnerScale, partyScale: customPartyScale, backgroundOpacity: 0.5, transitionDuration: '6s', iconsHidden: true });
+          previous = { ...customRender, rosterSize: 3 };
+
+          const beforeLeaveRevision = target.__overlayLastRenderedRevision;
+          const leaveResponse = await fetch('/__test/party/0', { method: 'POST' });
+          const left = await leaveResponse.json();
+          await waitFor(() => target.__overlayLastRenderedRevision >= left.revision, 'final leave state was not rendered');
+          const afterLeave = target.__overlayLayoutTrace.find((entry) => entry.revision === left.revision && entry.phase === 'after-roster');
+          if (left.revision <= beforeLeaveRevision || !afterLeave || afterLeave.rosterSize !== 0) throw new Error('party did not return to 1/4');
+          if (afterLeave.owner.x !== previous.owner.x || afterLeave.owner.y !== previous.owner.y) throw new Error('owner moved when Party members left');
 
           output.dataset.result = 'pass';
           output.textContent = JSON.stringify({ result: 'PASS', captures }, null, 2);

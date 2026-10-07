@@ -51,16 +51,24 @@
           revision: state.revision,
           rosterSize: (state.party || []).length,
           owner: { x: ownerRect.x, y: ownerRect.y, top: style.top, left: style.left, transform: style.transform, inlineTop: owner.style.top, inlineLeft: owner.style.left, inlinePosition: owner.style.position },
-          party: { x: partyRect.x, y: partyRect.y, top: getComputedStyle(party).top, height: partyRect.height },
+          party: { x: partyRect.x, y: partyRect.y, top: getComputedStyle(party).top, transform: getComputedStyle(party).transform, height: partyRect.height },
           viewport: { width: window.innerWidth, height: window.innerHeight },
           configured: { xPercent: state.overlay.x_percent, yPercent: state.overlay.y_percent },
           measuredOwnerHeight: ownerRect.height,
           scale: state.overlay.scale,
+          partyCardScale: state.overlay.party_card_scale,
+          backgroundOpacity: state.overlay.background_opacity,
+          preset: state.overlay.preset,
+          showWorldIcon: state.overlay.show_world_icon,
+          showSchoolIcon: state.overlay.show_school_icon,
           cssVariables: {
             x: document.documentElement.style.getPropertyValue('--x'),
             y: document.documentElement.style.getPropertyValue('--y'),
             scale: document.documentElement.style.getPropertyValue('--scale'),
             ownerHeight: document.documentElement.style.getPropertyValue('--primary-scaled-height'),
+            primaryBackground: document.documentElement.style.getPropertyValue('--primary-bg-strong'),
+            partyBackground: document.documentElement.style.getPropertyValue('--party-bg-strong'),
+            transitionDuration: document.documentElement.style.getPropertyValue('--transition-duration'),
           },
         };
         window.__overlayLayoutTrace.push(trace);
@@ -139,7 +147,7 @@
         return { card, marker, school, name, world, zone };
       }
 
-      function renderParty(members) {
+      function renderParty(members, options) {
         const party = $('party');
         const roster = members.slice(0, 3);
         const wanted = new Set(roster.map((member) => member.peer_id));
@@ -159,7 +167,9 @@
           entry.marker.textContent = wizard.active ? 'ONLINE · IN THE SPIRAL' : 'ONLINE · BETWEEN WORLDS';
           entry.name.textContent = wizard.name;
           setSchoolIcon(entry.school, wizard.school);
+          entry.school.classList.toggle('hidden', options.show_school_icon === false);
           setWorldIcon(entry.world, wizard.world_icon);
+          entry.world.classList.toggle('hidden', options.show_world_icon === false);
           entry.zone.textContent = visible(wizard.zone);
           entry.zone.classList.toggle('hidden', !visible(wizard.zone));
           const atPosition = party.children[index];
@@ -173,18 +183,30 @@
         const y = options.y_percent ?? 16;
         const scale = options.scale ?? 1;
         const opacity = options.opacity ?? 1;
+        const partyCardScale = options.party_card_scale ?? 1;
+        const backgroundOpacity = options.background_opacity ?? 1;
+        const preset = options.preset || 'default';
         document.documentElement.style.setProperty('--x', `${x}%`);
         document.documentElement.style.setProperty('--y', `${y}%`);
         document.documentElement.style.setProperty('--scale', scale);
         document.documentElement.style.setProperty('--opacity', opacity);
+        document.documentElement.style.setProperty('--primary-bg-strong', (0.97 * backgroundOpacity).toFixed(3));
+        document.documentElement.style.setProperty('--primary-bg-mid', (0.95 * backgroundOpacity).toFixed(3));
+        document.documentElement.style.setProperty('--party-bg-strong', (0.91 * backgroundOpacity).toFixed(3));
+        document.documentElement.style.setProperty('--party-bg-mid', (0.88 * backgroundOpacity).toFixed(3));
+        document.documentElement.dataset.overlayPreset = preset;
         const primary = $('primary');
         primary.style.position = 'fixed';
         primary.style.left = `${x}%`;
         primary.style.top = `${y}%`;
         primary.style.transform = `scale(${scale})`;
         primary.style.opacity = opacity;
+        $('party').style.transform = `scale(${scale * partyCardScale})`;
         document.documentElement.style.setProperty('--transition-duration', `${options.transition_seconds ?? 4}s`);
         primary.classList.toggle('hidden', options.character_location === false);
+        $('primary-world-icon').classList.toggle('hidden', options.show_world_icon === false);
+        $('primary-school-icon').classList.toggle('hidden', options.show_school_icon === false);
+        $('arrival-icon').classList.toggle('hidden', options.show_world_icon === false);
 
         if (state.wizard) {
           $('primary-name').textContent = state.wizard.name;
@@ -209,7 +231,7 @@
         updatePartyAnchor();
 
         traceOverlayLayout('before-roster', state);
-        renderParty(state.party || []);
+        renderParty(state.party || [], options);
         traceOverlayLayout('after-roster', state);
 
         if (options.zone_transition !== false && state.active && state.raw_zone && previousZone !== null && state.raw_zone !== previousZone) {

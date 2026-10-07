@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use wizrust101_obs::{
-    config::{AppConfig, CharacterProfile},
+    config::{AppConfig, CharacterProfile, OverlayConfig, OverlayPreset},
     server,
     state::{SharedState, WizardPresence},
 };
@@ -33,12 +33,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             get(|| async { Html(include_str!("../tests/browser/live-overlay-runner.html")) }),
         )
         .route("/__test/party/{count}", post(set_party))
+        .route("/__test/preset/{preset}", post(set_preset))
+        .route("/__test/customize", post(customize_presentation))
         .with_state(shared.clone());
     let app = server::router(shared).merge(fixture);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", TEST_PORT)).await?;
     println!("overlay live fixture listening on http://127.0.0.1:{TEST_PORT}");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+async fn set_preset(
+    Path(preset): Path<String>,
+    State(shared): State<SharedState>,
+) -> Result<Json<Value>, StatusCode> {
+    let preset = match preset.as_str() {
+        "default" => OverlayPreset::Default,
+        "compact" => OverlayPreset::Compact,
+        "minimal" => OverlayPreset::Minimal,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    shared.config.lock().unwrap().overlay = OverlayConfig::for_preset(preset);
+    shared.publish_current();
+    let state = shared.snapshot();
+    Ok(Json(
+        json!({ "revision": state.revision, "preset": preset }),
+    ))
+}
+
+async fn customize_presentation(State(shared): State<SharedState>) -> Json<Value> {
+    {
+        let mut config = shared.config.lock().unwrap();
+        config.overlay.scale = 1.1;
+        config.overlay.party_card_scale = 0.7;
+        config.overlay.background_opacity = 0.5;
+        config.overlay.show_world_icon = false;
+        config.overlay.show_school_icon = false;
+        config.overlay.transition_seconds = 6.0;
+    }
+    shared.publish_current();
+    let state = shared.snapshot();
+    Json(json!({ "revision": state.revision }))
 }
 
 async fn set_party(

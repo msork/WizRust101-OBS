@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    config::{AppConfig, CharacterProfile, SCHOOLS, UiTheme},
+    config::{AppConfig, CharacterProfile, OverlayPreset, SCHOOLS, UiTheme},
     peer::{self},
     state::SharedState,
 };
@@ -834,7 +834,45 @@ impl SettingsApp {
             "Keep the game visible with a compact overlay near the edge.",
         );
         ui.add_space(8.0);
+        let colors = palette(self.draft.ui_theme);
         let o = &mut self.draft.overlay;
+        let selected_preset = o.preset;
+        ui.horizontal(|ui| {
+            ui.label("Presentation preset");
+            ComboBox::from_id_salt("overlay-preset")
+                .selected_text(overlay_preset_name(o.preset))
+                .show_ui(ui, |ui| {
+                    for preset in [
+                        OverlayPreset::Default,
+                        OverlayPreset::Compact,
+                        OverlayPreset::Minimal,
+                    ] {
+                        ui.selectable_value(&mut o.preset, preset, overlay_preset_name(preset));
+                    }
+                });
+            if brass_button(ui, "Reset to preset").clicked() {
+                o.reset_to_preset();
+            }
+        });
+        if o.preset != selected_preset {
+            o.reset_to_preset();
+        }
+        ui.label(
+            RichText::new(if o.differs_from_preset() {
+                format!(
+                    "Customized from the {} preset",
+                    overlay_preset_name(o.preset)
+                )
+            } else {
+                format!("Using the {} preset", overlay_preset_name(o.preset))
+            })
+            .small()
+            .color(if o.differs_from_preset() {
+                colors.accent
+            } else {
+                colors.subtitle
+            }),
+        );
         setting_toggle(
             ui,
             "Character and location plaque",
@@ -847,6 +885,20 @@ impl SettingsApp {
             &mut o.zone_transition,
             "Briefly reveal a new location when the game changes zones.",
         );
+        ui.horizontal(|ui| {
+            setting_toggle(
+                ui,
+                "World icon",
+                &mut o.show_world_icon,
+                "Show the resolved world's icon on location cards and reveals.",
+            );
+            setting_toggle(
+                ui,
+                "School icon",
+                &mut o.show_school_icon,
+                "Show school sigils beside wizard names.",
+            );
+        });
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.label("X position");
@@ -861,8 +913,14 @@ impl SettingsApp {
             ui.add(egui::Slider::new(&mut o.opacity, 0.0..=1.0));
         });
         ui.horizontal(|ui| {
-            ui.label("Transition duration");
+            ui.label("Zone transition duration");
             ui.add(egui::Slider::new(&mut o.transition_seconds, 1.0..=20.0).suffix(" sec"));
+        });
+        ui.horizontal(|ui| {
+            ui.label("Party card scale");
+            ui.add(egui::Slider::new(&mut o.party_card_scale, 0.4..=1.5));
+            ui.label("Card background opacity");
+            ui.add(egui::Slider::new(&mut o.background_opacity, 0.0..=1.0));
         });
         if self.demo_mode {
             ui.add_space(12.0);
@@ -1368,6 +1426,14 @@ fn activate_selected_profile(config: &mut AppConfig, profile_id: &str) -> bool {
         true
     } else {
         false
+    }
+}
+
+fn overlay_preset_name(preset: OverlayPreset) -> &'static str {
+    match preset {
+        OverlayPreset::Default => "Default",
+        OverlayPreset::Compact => "Compact",
+        OverlayPreset::Minimal => "Minimal",
     }
 }
 

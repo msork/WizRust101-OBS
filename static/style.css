@@ -17,7 +17,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   min-width: 0;
   min-height: 112px;
   padding: clamp(12px, .8vw, 18px) clamp(18px, 1.1vw, 26px) clamp(12px, .8vw, 18px) clamp(14px, .85vw, 20px);
-  background: linear-gradient(115deg, rgba(37,25,34,.97), rgba(53,37,42,.95) 62%, rgba(35,27,37,.97));
+  background: linear-gradient(115deg, rgba(37,25,34,var(--primary-bg-strong,.97)), rgba(53,37,42,var(--primary-bg-mid,.95)) 62%, rgba(35,27,37,var(--primary-bg-strong,.97)));
   border: 1px solid #d6b86e;
   clip-path: polygon(0 0,97% 0,100% 50%,97% 100%,0 100%,1.5% 50%);
   box-shadow: inset 0 0 0 2px rgba(230,207,148,.19), inset 0 0 18px rgba(13,10,20,.28), 0 4px 15px #0008;
@@ -44,7 +44,7 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
   min-width: 0;
   min-height: 55px;
   padding: 5px 9px 6px;
-  background: linear-gradient(112deg, rgba(38,31,38,.91), rgba(49,39,44,.88));
+  background: linear-gradient(112deg, rgba(38,31,38,var(--party-bg-strong,.91)), rgba(49,39,44,var(--party-bg-mid,.88)));
   border: 1px solid rgba(196,164,99,.58);
   border-left: 3px solid var(--school-primary, #ad9256);
   box-shadow: inset 0 0 0 1px rgba(237,215,166,.07), 0 2px 7px #0005;
@@ -57,6 +57,36 @@ body { color: #fff4d6; font-family: Georgia, "Palatino Linotype", serif; }
 .party-location { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 21px; color: #d5c8ae; font-size: clamp(10px, .56vw, 12px); line-height: 1.15; }
 .party-world-icon { width: 20px; height: 20px; }
 .party-location > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+:root[data-overlay-preset="compact"] .primary { width: clamp(270px, 15vw, 340px); min-height: 96px; padding: 9px 15px 9px 11px; gap: 10px; }
+:root[data-overlay-preset="compact"] .world-icon { width: 36px; height: 36px; }
+:root[data-overlay-preset="compact"] .school-icon { width: 20px; height: 20px; }
+:root[data-overlay-preset="compact"] .identity { font-size: clamp(15px, .86vw, 19px); }
+:root[data-overlay-preset="compact"] .primary-location { min-height: 36px; gap: 2px; }
+:root[data-overlay-preset="compact"] .zone-name { font-size: clamp(13px, .78vw, 17px); }
+:root[data-overlay-preset="compact"] .party { gap: 3px; width: clamp(235px, 14vw, 320px); }
+:root[data-overlay-preset="compact"] .party-card { min-height: 47px; padding: 3px 7px 4px; gap: 1px; }
+:root[data-overlay-preset="compact"] .party-school-icon { width: 17px; height: 17px; }
+:root[data-overlay-preset="compact"] .party-world-icon { width: 18px; height: 18px; }
+:root[data-overlay-preset="compact"] .party-name { font-size: clamp(10px, .58vw, 12px); }
+:root[data-overlay-preset="compact"] .party-location { min-height: 18px; font-size: clamp(9px, .5vw, 11px); }
+
+:root[data-overlay-preset="minimal"] .primary { width: min(260px, 90vw); min-height: 76px; padding: 7px 10px; gap: 8px; clip-path: none; border-radius: 7px; box-shadow: inset 0 0 0 1px rgba(230,207,148,.12), 0 2px 7px #0006; }
+:root[data-overlay-preset="minimal"] .primary::before { display: none; }
+:root[data-overlay-preset="minimal"] .world-icon { width: 30px; height: 30px; }
+:root[data-overlay-preset="minimal"] .school-icon { width: 18px; height: 18px; }
+:root[data-overlay-preset="minimal"] .eyebrow { display: none; }
+:root[data-overlay-preset="minimal"] .identity { margin-top: 0; font-size: clamp(13px, .74vw, 16px); }
+:root[data-overlay-preset="minimal"] .primary-location { min-height: 30px; margin-top: 2px; gap: 1px; }
+:root[data-overlay-preset="minimal"] .world-name { font-size: clamp(9px, .54vw, 11px); }
+:root[data-overlay-preset="minimal"] .zone-name { font-size: clamp(11px, .66vw, 14px); }
+:root[data-overlay-preset="minimal"] .party { gap: 2px; width: min(225px, 84vw); }
+:root[data-overlay-preset="minimal"] .party-card { min-height: 40px; padding: 2px 6px 3px; gap: 0; clip-path: none; border-radius: 4px; }
+:root[data-overlay-preset="minimal"] .party-marker { font-size: 6px; letter-spacing: .08em; }
+:root[data-overlay-preset="minimal"] .party-school-icon { width: 16px; height: 16px; }
+:root[data-overlay-preset="minimal"] .party-world-icon { width: 17px; height: 17px; }
+:root[data-overlay-preset="minimal"] .party-name { font-size: clamp(9px, .52vw, 11px); }
+:root[data-overlay-preset="minimal"] .party-location { min-height: 17px; font-size: clamp(8px, .46vw, 10px); }
 .arrival {
   position: fixed;
   left: 50vw;

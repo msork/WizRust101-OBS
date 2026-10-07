@@ -50,6 +50,8 @@ World art lookup uses the RPC catalog and world PNGs. A test walks every world i
 
 The app uses event-driven full roster snapshots rather than per-member UI commands. This follows the Pokélink web-source pattern of an initial party roster plus party update events, with a simpler local protocol and state model.
 
+Overlay presets and presentation controls live only in `OverlayConfig`. The preset selector applies one of three overlay-only baselines, while individual overlay fields remain editable and serializable; the UI compares the current fields to that preset and reports customization. Reset replaces only `OverlayConfig`, never profiles or Party preferences. SSE snapshots carry the preset, party-card scale, background opacity, icon visibility, and transition duration. The page updates its root preset attribute and card styles on each state event. Default values preserve the accepted design and coordinates; Compact reduces owner/party footprint, while Minimal reduces ornament and size while keeping identity, location, and party presence visible.
+
 ## Invite, authentication, and network exposure
 
 Party hosting is off until the user selects **Host Party**. That action explicitly enables a peer-only listener on the configured port (default TCP 17842). Hosting creates a copyable `WIZPARTY1.` invite containing an address, single-member ID, random 256-bit secret, schema version, and issue/expiry timestamps. Invites expire after 24 hours and exist only in the current app process. A guest pastes the code and chooses **Join Party**. Only one active socket can use each invite; create another invite for each additional guest. **Leave Party** clears the in-memory paired credentials and stops hosting or joining.
